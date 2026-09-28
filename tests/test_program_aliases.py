@@ -39,6 +39,53 @@ def test_motor_conserva_equivalencias_historicas_de_programa():
         assert normalizar_texto(alias) in variantes
 
 
+
+def test_motor_incluye_todas_las_variantes_confirmadas_de_programa():
+    from motor_prizma import obtener_variantes_programa
+
+    casos = {
+        "Administración de Empresas": [
+            "Tecnología en Gestión Empresarial",
+            "Técnica Profesional en Procesos Empresariales",
+        ],
+        "Administración Turística y Hotelera": [
+            "Técnica Profesional en Procesos Turísticos y Hoteleros",
+            "Tecnología en Gestión de Turismo y Hoteles",
+            "Tecnología en Gestión Turística y Hoteles",
+        ],
+        "Contaduría Pública": [
+            "Tecnología Virtual en Gestión Contable",
+            "Técnica Profesional en Procesos Contables",
+        ],
+    }
+
+    for origen, aliases in casos.items():
+        variantes = obtener_variantes_programa(origen)
+        for alias in aliases:
+            assert normalizar_texto(alias) in variantes
+
+
+def test_tests_incluye_todas_las_variantes_confirmadas_de_programa():
+    casos = {
+        "Administración de Empresas": [
+            "Tecnología en Gestión Empresarial",
+            "Técnica Profesional en Procesos Empresariales",
+        ],
+        "Administración Turística y Hotelera": [
+            "Técnica Profesional en Procesos Turísticos y Hoteleros",
+            "Tecnología en Gestión de Turismo y Hoteles",
+        ],
+        "Contaduría Pública": [
+            "Tecnología Virtual en Gestión Contable",
+            "Técnica Profesional en Procesos Contables",
+        ],
+    }
+
+    for origen, aliases in casos.items():
+        variantes = {normalizar_texto(v) for v in resolver_variantes_programa(origen)}
+        for alias in aliases:
+            assert normalizar_texto(alias) in variantes
+
 def test_motor_acepta_prefijos_uxt_con_y_sin_separadores():
     from motor_prizma import limpiar_prefijo_tecnico_recurso
 

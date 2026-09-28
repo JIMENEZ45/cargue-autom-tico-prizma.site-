@@ -194,13 +194,18 @@ EQUIVALENCIAS_PROGRAMAS = (
     {
         "administracion de empresas",
         "tecnologia en gestion empresarial",
+        "tecnica profesional en procesos empresariales",
     },
     {
         "administracion turistica y hotelera",
+        "tecnica profesional en procesos turisticos y hoteleros",
+        "tecnologia en gestion de turismo y hoteles",
+        # Variante historica ya soportada; se conserva por compatibilidad.
         "tecnologia en gestion turistica y hoteles",
     },
     {
         "contaduria publica",
+        "tecnologia virtual en gestion contable",
         "tecnica profesional en procesos contables",
     },
     {

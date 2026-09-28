@@ -50,13 +50,18 @@ EQUIVALENCIAS_PROGRAMAS = (
     (
         "Administración de Empresas",
         "Tecnología en Gestión Empresarial",
+        "Técnica Profesional en Procesos Empresariales",
     ),
     (
         "Administración Turística y Hotelera",
+        "Técnica Profesional en Procesos Turísticos y Hoteleros",
+        "Tecnología en Gestión de Turismo y Hoteles",
+        # Variante histórica ya soportada; se conserva por compatibilidad.
         "Tecnología en Gestión Turística y Hoteles",
     ),
     (
         "Contaduría Pública",
+        "Tecnología Virtual en Gestión Contable",
         "Técnica Profesional en Procesos Contables",
     ),
     (
