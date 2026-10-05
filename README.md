@@ -1,8 +1,84 @@
 # Auto Prizma Pro — Interfaz de cargue automático
 
-Aplicación web (FastAPI + Playwright) que carga actividades y tests evaluativos en PRIZMA a partir de una matriz (Excel, CSV o Google Sheets) y un ZIP o carpeta de Drive con los recursos.
+Aplicación web que automatiza el cargue de contenidos académicos en **PRIZMA**. A partir de una matriz de diseño instruccional (Google Sheets, Excel o CSV) y los recursos del curso (ZIP o carpeta de Google Drive), la aplicación entra a PRIZMA con un navegador automatizado y carga las actividades **OVI**, **OVA** y **Retos evaluativos (Challenge)**. También crea **tests evaluativos** a partir de un documento Word (.docx).
 
-## Estructura
+Construida con **FastAPI** y **Playwright (Chromium)**. Se despliega en **Railway** con Docker.
+
+---
+
+## Contenido
+
+- [Funcionalidades](#funcionalidades)
+- [Cómo funciona](#cómo-funciona)
+- [Tecnologías](#tecnologías)
+- [Estructura del proyecto](#estructura-del-proyecto)
+- [Instalación local](#instalación-local)
+- [Variables de entorno](#variables-de-entorno)
+- [Configurar Google (OAuth)](#configurar-google-oauth)
+- [Administración de usuarios](#administración-de-usuarios)
+- [Uso: cargue de actividades](#uso-cargue-de-actividades)
+- [Uso: tests evaluativos](#uso-tests-evaluativos)
+- [Datos y persistencia](#datos-y-persistencia)
+- [Seguridad](#seguridad)
+- [Despliegue en Railway](#despliegue-en-railway)
+- [Pruebas](#pruebas)
+- [Notas para mantenimiento](#notas-para-mantenimiento)
+- [Solución de problemas](#solución-de-problemas)
+
+---
+
+## Funcionalidades
+
+- **Inicio de sesión por usuario.** Cada persona ve únicamente sus propios cargues, historial y reportes.
+- **Matriz por link o por archivo.** Lee la matriz desde Google Sheets (con la cuenta de Google del usuario) o desde un archivo Excel/CSV subido.
+- **Análisis previo.** Antes de cargar nada, muestra qué actividades se encontraron, qué recurso le corresponde a cada una y las advertencias (recurso faltante, diferencias entre Drive y el ZIP, duplicados).
+- **Selección de actividades.** El usuario elige qué actividades cargar después de revisar el análisis.
+- **Cola de cargues.** Hasta **2 cargues simultáneos**; los demás esperan en cola y se muestra su posición.
+- **Seguimiento en vivo.** Página de progreso por cargue, con opción de cancelar.
+- **Historial y reportes.** Cada cargue genera un reporte CSV que se puede ver en pantalla o descargar.
+- **Tests evaluativos.** Lee un .docx con preguntas, lo valida, permite corregirlo en pantalla y lo crea en PRIZMA. Puede hacerse por separado (`/tests`) o junto con un cargue de actividades.
+- **Tema claro/oscuro** y diseño adaptable a móvil.
+
+---
+
+## Cómo funciona
+
+```mermaid
+flowchart LR
+    A[Usuario inicia sesión] --> B[Matriz<br/>Sheets / Excel / CSV]
+    A --> C[Recursos<br/>ZIP / Drive]
+    B --> D[Análisis previo<br/>actividades + recursos + advertencias]
+    C --> D
+    D --> E[Usuario revisa y<br/>selecciona actividades]
+    E --> F[Cola de cargues<br/>máx. 2 a la vez]
+    F --> G[Playwright carga<br/>en PRIZMA]
+    G --> H[Reporte CSV<br/>+ historial]
+```
+
+1. El usuario inicia sesión y, si va a usar la matriz por link, conecta su cuenta de Google.
+2. Suministra la matriz y el ZIP, y marca las categorías a cargar (OVI, OVA, Retos, Test evaluativo).
+3. La aplicación analiza la matriz, relaciona cada actividad con su recurso y muestra el resultado.
+4. El usuario selecciona las actividades, ingresa sus credenciales de PRIZMA e inicia el cargue.
+5. El cargue entra en la cola; un navegador Chromium sin interfaz entra a PRIZMA y carga cada actividad.
+6. Al terminar se guarda el reporte y queda registrado en el historial.
+
+---
+
+## Tecnologías
+
+| Componente | Uso |
+|---|---|
+| Python 3.12 | Lenguaje (imagen Docker `python:3.12-bookworm`) |
+| FastAPI + Uvicorn | Servidor web y rutas |
+| Playwright (Chromium) | Automatización del navegador en PRIZMA |
+| openpyxl | Lectura y escritura de matrices Excel |
+| python-docx | Lectura de los tests en Word |
+| Google API Client + OAuth | Lectura de Google Sheets y Google Drive (solo lectura) |
+| pytest | Pruebas automáticas |
+
+---
+
+## Estructura del proyecto
 
 ```
 main.py                     Punto de entrada: arma la app (uvicorn main:app)
@@ -24,49 +100,250 @@ auto_prizma/                Código de la aplicación web
     analisis.py             Inicio y análisis previo al cargue
     cargues.py              Iniciar, seguir, cancelar y estado de cargues
     reportes.py             Historial, reportes guardados y descargas
-motor_prizma.py             Automatización de PRIZMA con Playwright (lectura de la matriz y cargue de actividades)
-drive_resource_policy.py    Reglas para decidir qué recurso de Drive corresponde a cada actividad
-gestionar_usuarios.py       CLI para administrar los usuarios de la interfaz
 tests_evaluativos/          Módulo de tests evaluativos (cuestionarios en PRIZMA a partir de un .docx)
   models.py                 Estructuras de datos del documento (tests, secciones, preguntas)
   parser.py                 Lectura del .docx y conversión a esas estructuras
   validation.py             Validación del documento (errores y advertencias)
   serializer.py             Exportación a JSON
   automation.py             Automatización de PRIZMA con Playwright para crear los tests
-  estado.py                 Estado en memoria de los trabajos y credenciales de PRIZMA
+  estado.py                 Estado en memoria de los trabajos y usuario de PRIZMA recordado
   vistas.py                 HTML del módulo (layout, revisión y tarjeta de estado)
   ejecucion.py              Ejecución del cargue de tests en segundo plano
   web.py                    Rutas /tests/...
-tests/                      Pruebas automáticas (pytest)
-scripts/                    Utilidades manuales (p. ej. probar la conexión con PRIZMA)
+motor_prizma.py             Motor de cargue: lectura de la matriz y automatización de PRIZMA
+drive_resource_policy.py    Reglas para decidir qué recurso de Drive corresponde a cada actividad
+gestionar_usuarios.py       Herramienta de consola para administrar usuarios
+scripts/                    Utilidades manuales (prueba de conexión con PRIZMA)
 static/                     Archivos estáticos (logo)
+tests/                      Pruebas automáticas (pytest)
 uploads/ temp/ resultados/  Archivos de trabajo generados en ejecución (no se versionan)
 data/                       Usuarios, tokens, historial y reportes (no se versiona; contiene secretos)
+Dockerfile                  Imagen para despliegue
 ```
 
-### Flujo general
+### Rutas principales
 
-1. El usuario inicia sesión (`rutas/sesion.py`) y, si lo necesita, conecta su cuenta de Google (`rutas/google.py`).
-2. En el inicio sube o enlaza la matriz y el ZIP / carpeta de Drive; `rutas/analisis.py` los analiza con `analisis.py`, `drive.py` y `drive_zip.py` y muestra el resultado (`vistas.py`).
-3. Al iniciar el cargue, `rutas/cargues.py` lo pone en la cola de `trabajos.py`, que ejecuta `motor_prizma.py` (con los ajustes de `integracion_motor.py`).
-4. Al terminar se guarda el reporte y el historial, consultables desde `rutas/reportes.py`.
+| Ruta | Descripción |
+|---|---|
+| `GET /login`, `POST /login` | Inicio de sesión |
+| `GET /salir` | Cerrar sesión |
+| `GET/POST /cambiar-clave` | Cambio de contraseña del usuario |
+| `GET /` | Inicio: formulario de matriz, recursos y categorías |
+| `POST /analizar` | Análisis previo de la matriz y los recursos |
+| `POST /iniciar/{trabajo_id}` | Inicia (encola) el cargue con las actividades seleccionadas |
+| `GET /cargue-actual` | Cargues en curso del usuario |
+| `GET /proceso/{trabajo_id}` | Progreso de un cargue |
+| `GET /estado/{trabajo_id}` | Estado del cargue en JSON (lo consulta la página de progreso) |
+| `POST /cancelar/{trabajo_id}` | Cancela un cargue |
+| `GET /historial`, `GET /reportes` | Historial de cargues y reportes generados |
+| `GET /reporte/{trabajo_id}`, `GET /reporte-guardado/{registro_id}` | Ver o descargar un reporte |
+| `GET /google/conectar`, `GET /google/callback`, `POST /google/desconectar` | Conexión de la cuenta de Google |
+| `GET /tests` y `/tests/...` | Módulo de tests evaluativos |
 
-Tests evaluativos (`/tests`): el .docx se lee con `parser.py` y se valida con `validation.py`; el usuario lo revisa y corrige en pantalla y luego `ejecucion.py` lo carga en PRIZMA con `automation.py`. Un test también puede cargarse junto con un cargue de actividades (`_ejecutar_test_en_cargue` en `auto_prizma/trabajos.py`).
+---
 
-## Ejecutar en local
+## Instalación local
+
+**Requisitos:** Python 3.12 o superior y Git.
 
 ```powershell
+git clone https://github.com/Kevin2428/auto-prizma-pro.git
+cd auto-prizma-pro
+
 python -m venv .venv
 .\.venv\Scripts\pip install -r requirements-dev.txt
 .\.venv\Scripts\playwright install chromium
-.\.venv\Scripts\uvicorn main:app --reload
 ```
 
-Crear el primer usuario:
+Crear el primer usuario y arrancar el servidor:
 
 ```powershell
 .\.venv\Scripts\python gestionar_usuarios.py crear
+.\.venv\Scripts\uvicorn main:app --reload
 ```
+
+Abrir http://127.0.0.1:8000 e iniciar sesión.
+
+> En Linux/macOS los ejecutables están en `.venv/bin/` en lugar de `.venv\Scripts\`.
+
+---
+
+## Variables de entorno
+
+Ninguna es obligatoria para arrancar; las de Google son necesarias solo para usar la matriz por link.
+
+| Variable | Descripción | Valor por defecto |
+|---|---|---|
+| `AUTO_PRIZMA_DATA_DIR` | Carpeta donde se guardan usuarios, tokens, historial y reportes. En producción debe apuntar a un volumen persistente. | `<proyecto>/data` |
+| `AUTO_PRIZMA_SECRET` | Clave para firmar las cookies de sesión. Si no se define, se genera una y se guarda en `data/secreto_sesion.txt`. | Generada automáticamente |
+| `AUTO_PRIZMA_COOKIE_SECURE` | `1` para marcar la cookie como `Secure` (solo HTTPS). También se activa sola si `GOOGLE_REDIRECT_URI` empieza por `https://`. | Desactivada |
+| `AUTO_PRIZMA_MAX_SIMULTANEOS` | Cargues que pueden correr a la vez. Solo admite `1` o `2`; cualquier otro valor se toma como `2`. | `2` |
+| `GOOGLE_CLIENT_ID` | ID del cliente OAuth de Google. | — |
+| `GOOGLE_CLIENT_SECRET` | Secreto del cliente OAuth de Google. | — |
+| `GOOGLE_REDIRECT_URI` | URL de retorno de Google: `https://<dominio>/google/callback`. | — |
+
+---
+
+## Configurar Google (OAuth)
+
+La matriz por link y la lectura de carpetas de Drive usan la cuenta de Google **de cada usuario**, con permisos de **solo lectura** (`spreadsheets.readonly` y `drive.readonly`).
+
+1. En [Google Cloud Console](https://console.cloud.google.com/) crear (o elegir) un proyecto.
+2. Habilitar **Google Sheets API** y **Google Drive API**.
+3. Configurar la pantalla de consentimiento OAuth y agregar los permisos de solo lectura de Sheets y Drive.
+4. Crear credenciales **ID de cliente de OAuth** de tipo **Aplicación web**.
+5. En *URI de redireccionamiento autorizados* agregar la URL de la app terminada en `/google/callback`:
+   - Producción: `https://<dominio-de-railway>/google/callback`
+   - Local: `http://127.0.0.1:8000/google/callback`
+6. Copiar el ID y el secreto en `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y `GOOGLE_REDIRECT_URI`.
+
+Cada usuario pulsa **Conectar con Google** dentro de la app; su token queda en `data/tokens/` y puede desconectarlo cuando quiera.
+
+---
+
+## Administración de usuarios
+
+Los usuarios se gestionan desde la consola con `gestionar_usuarios.py`. Todas las opciones piden los datos de forma interactiva y la contraseña no se muestra en pantalla.
+
+```powershell
+python gestionar_usuarios.py listar       # Lista los usuarios y si tienen Google conectado
+python gestionar_usuarios.py crear        # Crea un usuario
+python gestionar_usuarios.py clave        # Cambia la contraseña de un usuario
+python gestionar_usuarios.py desactivar   # Impide el acceso sin borrar el usuario
+python gestionar_usuarios.py activar      # Vuelve a permitir el acceso
+python gestionar_usuarios.py borrar       # Elimina el usuario y su token de Google (pide confirmación; su historial se conserva)
+```
+
+La contraseña debe tener al menos 8 caracteres. Cada usuario también puede cambiar la suya desde **Mi contraseña** dentro de la app.
+
+> En Railway estos comandos se ejecutan desde la consola del servicio, para que actúen sobre el volumen de datos de producción.
+
+---
+
+## Uso: cargue de actividades
+
+### Formato de la matriz
+
+La matriz puede tener varias hojas; cada hoja que tenga la cabecera esperada se procesa como un curso.
+
+| Celda / columna | Contenido |
+|---|---|
+| `A1` | Nombre del programa |
+| `A2` | Nombre del curso (si está vacío se usa el nombre de la hoja) |
+| Columna `A` (fila de cabecera) | El texto **Semana correspondiente**, en alguna de las primeras 30 filas. Las actividades empiezan en la fila siguiente. |
+| Columna `A` | Semana |
+| Columna `B` | Unidad |
+| Columna `D` | Nombre de la actividad |
+| Columna `E` | Categoría: `OVI`, `OVA` o `Challenge` (reto evaluativo). Las filas con otra categoría se ignoran. |
+| Columna `F` | Tipo de recurso |
+| Columna `G` | Enlace al recurso (por ejemplo, el enlace de Google Drive) |
+
+Las filas sin nombre o sin categoría se omiten.
+
+### Pasos en la aplicación
+
+1. **Matriz:** elegir *Por link* (pegar el enlace de Google Sheets; requiere Google conectado) o *Por archivo* (subir `.xlsx` o `.csv`; no requiere Google).
+2. **Recursos:** subir el ZIP con los archivos H5P y PDF de las actividades.
+3. **Categorías:** marcar OVI, OVA, Retos evaluativos y/o Test evaluativo.
+4. **Analizar:** revisar las actividades encontradas, el recurso asignado a cada una y las advertencias.
+5. **Iniciar:** seleccionar las actividades, ingresar usuario y contraseña de PRIZMA e iniciar. Si ya hay 2 cargues en curso, el nuevo espera en cola.
+6. **Seguimiento:** ver el avance en *Cargue actual*; se puede cancelar en cualquier momento.
+
+### Reporte
+
+Cada cargue genera un CSV con las columnas: `Fila Excel`, `Programa`, `Curso`, `Semana`, `Unidad`, `Actividad`, `Categoría`, `Tipo`, `Recurso`, `Resultado` y `Observación`. Se consulta en **Reportes** o **Historial**.
+
+---
+
+## Uso: tests evaluativos
+
+Los tests se crean en PRIZMA a partir de un documento Word. Se pueden cargar desde **Test** (`/tests`) o marcando *Test evaluativo* en el cargue de actividades. En este último caso se piden los datos académicos en el formato `CódigoPrograma CódigoPensum CódigoAsignatura NombreAsignatura`, separados por espacios o guiones, y el semestre.
+
+### Formato del documento (.docx)
+
+- **Título:** una línea como `Título del TEST` seguida del nombre del test.
+- **Semana y corte:** por ejemplo `Semana 1 - Corte 1`.
+- **Secciones:** un encabezado por tipo de pregunta:
+  - `Verdadero/Falso`
+  - `Selección múltiple`, `Única respuesta` u `Opción múltiple`
+  - `Emparejamiento` o `Relacione`
+  - `Pregunta abierta` o `Respuesta corta`
+- **Preguntas** numeradas: `1. Enunciado...`
+- **Respuesta correcta** al final de la pregunta o en una línea aparte:
+  - Verdadero/falso: `[R: Verdadero]`, `[R: F]` o `(V)`
+  - Selección: `[R: b]` o `Respuesta: b`
+
+Ejemplo:
+
+```text
+Título del TEST
+Prueba de conocimientos
+Semana 1 - Corte 1
+Verdadero/Falso
+1. El sol es una estrella. [R: Verdadero]
+Selección múltiple
+2. ¿Cuánto es 2 + 2? a) 3 b) 4 c) 5 [R: b]
+```
+
+También acepta encabezados en inglés, francés y portugués (por ejemplo `True/False`, `Multiple choice`, `Matching`).
+
+### Flujo
+
+1. Subir el .docx o pegar el enlace de un Google Doc.
+2. Revisar el resultado: la app marca en rojo las preguntas con errores (por ejemplo, sin respuesta correcta) y permite corregir títulos y enunciados en pantalla.
+3. Ejecutar en PRIZMA. Si la asignatura de los datos no coincide exactamente, la app pide elegir la asignatura correcta entre las que encontró y reutiliza esa elección para los siguientes tests.
+4. Seguir el avance en la página de estado. También existe un modo de **solo simulación**, que recorre el proceso sin guardar en PRIZMA.
+
+---
+
+## Datos y persistencia
+
+Todo lo que debe sobrevivir a un reinicio se guarda en `AUTO_PRIZMA_DATA_DIR` (por defecto `data/`):
+
+| Archivo / carpeta | Contenido |
+|---|---|
+| `usuarios.json` | Usuarios de la app con su contraseña cifrada |
+| `secreto_sesion.txt` | Clave de firma de cookies (si no se usa `AUTO_PRIZMA_SECRET`) |
+| `tokens/` | Tokens de Google de cada usuario |
+| `historial.json` | Registro de cargues realizados |
+| `reportes/` | Reportes CSV de cada cargue |
+
+Las carpetas `uploads/` y `temp/` guardan archivos de trabajo temporales.
+
+> **Importante:** el módulo de tests guarda el **usuario** de PRIZMA recordado (nunca la contraseña) en `<proyecto>/data/tokens/prizma_<usuario>.json`. Esta ruta es fija y no usa `AUTO_PRIZMA_DATA_DIR`.
+
+La carpeta `data/` está en `.gitignore` y **nunca debe subirse al repositorio**.
+
+---
+
+## Seguridad
+
+- **Contraseñas de la app:** se guardan con PBKDF2-SHA256 (240 000 iteraciones y sal propia por usuario); nunca en texto plano.
+- **Sesión:** cookie firmada con HMAC-SHA256 que dura 12 horas. El servidor no guarda sesiones, así que reiniciar no cierra las sesiones abiertas.
+- **Intentos fallidos:** tras 5 intentos fallidos el acceso se bloquea 120 segundos.
+- **Aislamiento entre usuarios:** cada persona solo ve y controla sus propios cargues, reportes e historial.
+- **Credenciales de PRIZMA:** se piden en cada cargue y se mantienen solo en memoria mientras dura; no se escriben en archivos.
+- **Google:** cada usuario autoriza su propia cuenta, con permisos de solo lectura.
+
+---
+
+## Despliegue en Railway
+
+El proyecto se despliega con el `Dockerfile` del repositorio:
+
+- Imagen base `python:3.12-bookworm`, instala las dependencias y Chromium con `playwright install --with-deps chromium`.
+- Arranca con `uvicorn main:app --host 0.0.0.0 --port 8000`.
+
+**Despliegue automático:** cada `push` a la rama `main` dispara un nuevo despliegue en Railway.
+
+Configuración recomendada del servicio:
+
+1. **Volumen persistente** montado, por ejemplo, en `/app/data`, y `AUTO_PRIZMA_DATA_DIR=/app/data` para no perder usuarios, tokens ni reportes en cada despliegue.
+2. **Variables de entorno:** `AUTO_PRIZMA_SECRET` (una cadena larga y aleatoria) y las de Google, con `GOOGLE_REDIRECT_URI=https://<dominio>/google/callback`.
+3. **Red:** el contenedor escucha en el puerto **8000**.
+4. **Volver atrás:** si un despliegue falla, en *Deployments* se puede hacer *Rollback* al anterior.
+
+---
 
 ## Pruebas
 
@@ -74,13 +351,34 @@ Crear el primer usuario:
 .\.venv\Scripts\python -m pytest -q
 ```
 
-## Docker
+Las pruebas usan una carpeta de datos temporal (ver `tests/conftest.py`), así que no tocan los usuarios ni los reportes reales. Las pruebas de automatización simulan PRIZMA: no abren el navegador ni se conectan al sitio real.
+
+Para probar manualmente la conexión con PRIZMA (abre un navegador visible y espera el inicio de sesión, sin modificar nada):
 
 ```powershell
-docker build -t auto-prizma .
-docker run -p 8000:8000 -v ${PWD}/data:/app/data auto-prizma
+.\.venv\Scripts\python scripts\prueba_conexion_prizma.py
 ```
 
-## Respaldos
+---
 
-No guardes copias como `main_backup_*.py`: el historial de git ya conserva cada versión (`git log -- main.py`, `git show <commit>:main.py`).
+## Notas para mantenimiento
+
+- **Orden de arranque (`main.py`):** primero se importa `auto_prizma.integracion_motor`, que reemplaza en memoria algunas funciones de `motor_prizma` (`leer_actividades_excel`, `resolver_recurso`, `validar_carpeta_drive_para_actividad`), y luego se registran las rutas. Al modificar esas funciones hay que revisar ambos archivos.
+- **Botón "Test" en Cargue actual:** lo agrega `tests_evaluativos/vistas.py` (`_patch_main_nav`) en memoria sobre `auto_prizma/rutas/cargues.py`.
+- **Equivalencias de programas:** si PRIZMA usa un nombre de programa distinto al de la matriz, se agrega explícitamente en `EQUIVALENCIAS_PROGRAMAS` (`motor_prizma.py`). No se usa coincidencia aproximada a propósito.
+- **Límite de navegadores:** el máximo de 2 cargues simultáneos está fijado en `auto_prizma/trabajos.py` para no saturar el servidor.
+- **Respaldos:** no guardes copias como `main_backup_*.py`; git ya conserva cada versión (`git log -- archivo`, `git show <commit>:archivo`).
+
+---
+
+## Solución de problemas
+
+| Síntoma | Causa / solución |
+|---|---|
+| Al conectar Google aparece *"Faltan variables de entorno de Google"* | Definir `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y `GOOGLE_REDIRECT_URI`. |
+| Google responde *redirect_uri_mismatch* | La URL de `GOOGLE_REDIRECT_URI` debe estar registrada exactamente igual en Google Cloud Console. |
+| *"La autorizacion de Google expiro"* | El proceso de autorización dura 10 minutos; volver a pulsar **Conectar con Google**. |
+| No permite iniciar sesión tras varios intentos | Bloqueo de 120 segundos después de 5 intentos fallidos; esperar e intentar de nuevo. |
+| Tras un despliegue desaparecieron los usuarios o reportes | Falta el volumen persistente o `AUTO_PRIZMA_DATA_DIR` no apunta a él. |
+| En el log aparece *"AVISO: existe data/google_token.json"* | Es un token compartido de una versión anterior que ya no se usa; revocarlo en https://myaccount.google.com/permissions y borrar el archivo. |
+| Una hoja de la matriz no aparece en el análisis | Revisar que la columna A tenga el texto **Semana correspondiente** en alguna de las primeras 30 filas. |
