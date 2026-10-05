@@ -4,7 +4,8 @@ from unittest.mock import MagicMock, patch
 from docx import Document
 from fastapi.testclient import TestClient
 
-from main import app, _firmar_sesion
+from main import app
+from auto_prizma.sesiones import _firmar_sesion
 from test_module.automation import PrizmaTestAutomator, normalizar_texto
 from test_module.models import DocumentTest, Question, Section
 
@@ -645,7 +646,8 @@ def test_guardar_creacion_test_raises_when_prizma_shows_error_alert():
 def test_estado_prizma_json_returns_dashboard_metrics_and_detail():
     from fastapi.testclient import TestClient
     from test_module.web import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
-    from main import app, _firmar_sesion
+    from main import app
+    from auto_prizma.sesiones import _firmar_sesion
 
     client = TestClient(app)
     client.cookies.set("ap_sesion", _firmar_sesion("adminlocal"))
@@ -689,7 +691,8 @@ def test_ejecutar_prizma_endpoint_respects_unchecked_simulation():
     from fastapi.testclient import TestClient
     from test_module.models import TestDocument, DocumentTest
     from test_module.web import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
-    from main import app, _firmar_sesion
+    from main import app
+    from auto_prizma.sesiones import _firmar_sesion
 
     client = TestClient(app)
     client.cookies.set("ap_sesion", _firmar_sesion("adminlocal"))
@@ -718,7 +721,8 @@ def test_ejecutar_prizma_endpoint_respects_unchecked_simulation():
 def test_status_prizma_renders_error_banner_on_failure():
     from fastapi.testclient import TestClient
     from test_module.web import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
-    from main import app, _firmar_sesion
+    from main import app
+    from auto_prizma.sesiones import _firmar_sesion
 
     client = TestClient(app)
     client.cookies.set("ap_sesion", _firmar_sesion("adminlocal"))
@@ -775,7 +779,8 @@ def test_simplificar_mensaje_error():
 def test_cancelar_prizma_endpoint_registers_cancellation():
     from fastapi.testclient import TestClient
     from test_module.web import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
-    from main import app, _firmar_sesion
+    from main import app
+    from auto_prizma.sesiones import _firmar_sesion
 
     client = TestClient(app)
     client.cookies.set("ap_sesion", _firmar_sesion("adminlocal"))
@@ -813,7 +818,8 @@ def test_cancelar_prizma_endpoint_registers_cancellation():
 def test_status_prizma_renders_stop_button_and_detenido_banner():
     from fastapi.testclient import TestClient
     from test_module.web import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
-    from main import app, _firmar_sesion
+    from main import app
+    from auto_prizma.sesiones import _firmar_sesion
 
     client = TestClient(app)
     client.cookies.set("ap_sesion", _firmar_sesion("adminlocal"))
@@ -1016,7 +1022,7 @@ def test_ejecutar_test_job_exitoso():
 
 
 def test_ejecutar_test_en_cargue_integracion():
-    from main import _ejecutar_test_en_cargue
+    from auto_prizma.trabajos import _ejecutar_test_en_cargue
     from test_module.web import _JOBS, _JOBS_LOCK
     from test_module.models import TestDocument, DocumentTest
 

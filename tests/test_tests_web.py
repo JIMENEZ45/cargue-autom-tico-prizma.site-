@@ -3,7 +3,8 @@ from io import BytesIO
 from docx import Document
 from fastapi.testclient import TestClient
 
-from main import app, _firmar_sesion
+from main import app
+from auto_prizma.sesiones import _firmar_sesion
 from test_module.models import document_to_dict
 from test_module.parser import parse_docx_bytes
 

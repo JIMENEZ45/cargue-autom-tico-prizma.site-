@@ -83,7 +83,7 @@ import os
 import sys
 
 def _es_google_conectado(usuario: str) -> bool:
-    main_mod = sys.modules.get("main")
+    main_mod = sys.modules.get("auto_prizma.google_oauth")
     if main_mod and hasattr(main_mod, "_google_conectado"):
         try:
             return bool(main_mod._google_conectado(usuario))
@@ -94,8 +94,8 @@ def _es_google_conectado(usuario: str) -> bool:
 
 
 def _patch_main_nav():
-    """Garantiza en memoria que el botón Test aparezca en /cargue-actual sin tocar main.py."""
-    main_mod = sys.modules.get("main")
+    """Garantiza en memoria que el botón Test aparezca en /cargue-actual sin tocar auto_prizma/rutas/cargues.py."""
+    main_mod = sys.modules.get("auto_prizma.rutas.cargues")
     if not main_mod:
         return
 
@@ -1341,7 +1341,7 @@ def ejecutar_test_job(
             return
         estado_final = "finalizado" if auto_state["estado"] == "completado" else auto_state["estado"]
         try:
-            from main import _registrar_historial_test
+            from auto_prizma.trabajos import _registrar_historial_test
             _registrar_historial_test(job_id, ruta_reporte, cascada, estado_final, auto_state.get("owner", ""))
         except Exception:
             pass
@@ -1443,7 +1443,7 @@ async def ejecutar_prizma(
 
     ruta_reporte_test = None
     if not simulacion:
-        from main import _ruta_reporte_test
+        from auto_prizma.trabajos import _ruta_reporte_test
         ruta_reporte_test = _ruta_reporte_test(cascada, job_id)
 
     threading.Thread(

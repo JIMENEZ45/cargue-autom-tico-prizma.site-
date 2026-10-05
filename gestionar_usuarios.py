@@ -19,7 +19,7 @@ import json
 import os
 import sys
 
-import main as app
+from auto_prizma import google_oauth, sesiones
 
 
 def _pedir_usuario(mensaje="Usuario: "):
@@ -49,7 +49,7 @@ def _pedir_contrasena():
 
 
 def listar():
-    usuarios = app._cargar_usuarios()
+    usuarios = sesiones._cargar_usuarios()
 
     if not usuarios:
         print("No hay usuarios creados todavia.")
@@ -63,7 +63,7 @@ def listar():
     for clave in sorted(usuarios):
         registro = usuarios[clave]
         estado = "activo" if registro.get("activo", True) else "desactivado"
-        tiene_token = os.path.isfile(app._ruta_token_google(clave))
+        tiene_token = os.path.isfile(google_oauth._ruta_token_google(clave))
 
         print(
             f"{clave:<24} {str(registro.get('nombre') or ''):<26} "
@@ -77,42 +77,42 @@ def listar():
 def crear():
     usuario = _pedir_usuario("Usuario nuevo (sin espacios): ")
 
-    if usuario in app._cargar_usuarios():
+    if usuario in sesiones._cargar_usuarios():
         print(f"El usuario '{usuario}' ya existe. Usa 'clave' para cambiarle la contrasena.")
         sys.exit(1)
 
     nombre = input("Nombre para mostrar (Enter para usar el usuario): ").strip()
     contrasena = _pedir_contrasena()
 
-    app._crear_usuario(usuario, contrasena, nombre)
+    sesiones._crear_usuario(usuario, contrasena, nombre)
     print(f"Usuario '{usuario}' creado.")
 
 
 def clave():
     usuario = _pedir_usuario("Usuario al que le cambias la contrasena: ")
-    usuarios = app._cargar_usuarios()
+    usuarios = sesiones._cargar_usuarios()
 
     if usuario not in usuarios:
         print(f"El usuario '{usuario}' no existe.")
         sys.exit(1)
 
     contrasena = _pedir_contrasena()
-    app._crear_usuario(usuario, contrasena, usuarios[usuario].get("nombre"))
+    sesiones._crear_usuario(usuario, contrasena, usuarios[usuario].get("nombre"))
     print(f"Contrasena de '{usuario}' actualizada.")
 
 
 def _cambiar_estado(activo):
     usuario = _pedir_usuario()
 
-    with app.USUARIOS_LOCK:
-        usuarios = app._cargar_usuarios()
+    with sesiones.USUARIOS_LOCK:
+        usuarios = sesiones._cargar_usuarios()
 
         if usuario not in usuarios:
             print(f"El usuario '{usuario}' no existe.")
             sys.exit(1)
 
         usuarios[usuario]["activo"] = activo
-        app._guardar_usuarios(usuarios)
+        sesiones._guardar_usuarios(usuarios)
 
     print(
         f"Usuario '{usuario}' "
@@ -131,8 +131,8 @@ def activar():
 def borrar():
     usuario = _pedir_usuario("Usuario a borrar: ")
 
-    with app.USUARIOS_LOCK:
-        usuarios = app._cargar_usuarios()
+    with sesiones.USUARIOS_LOCK:
+        usuarios = sesiones._cargar_usuarios()
 
         if usuario not in usuarios:
             print(f"El usuario '{usuario}' no existe.")
@@ -147,9 +147,9 @@ def borrar():
             sys.exit(1)
 
         usuarios.pop(usuario, None)
-        app._guardar_usuarios(usuarios)
+        sesiones._guardar_usuarios(usuarios)
 
-    ruta_token = app._ruta_token_google(usuario)
+    ruta_token = google_oauth._ruta_token_google(usuario)
 
     if os.path.isfile(ruta_token):
         os.remove(ruta_token)

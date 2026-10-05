@@ -10,6 +10,7 @@ import tempfile
 # Debe definirse antes de que cualquier test importe main.
 os.environ["AUTO_PRIZMA_DATA_DIR"] = tempfile.mkdtemp(prefix="auto_prizma_tests_")
 
-import main  # noqa: E402
+import main  # noqa: E402,F401
+from auto_prizma.sesiones import _crear_usuario  # noqa: E402
 
-main._crear_usuario("adminlocal", "clave-de-pruebas", "Admin local")
+_crear_usuario("adminlocal", "clave-de-pruebas", "Admin local")

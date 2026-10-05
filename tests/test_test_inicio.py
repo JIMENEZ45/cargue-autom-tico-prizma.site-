@@ -1,7 +1,9 @@
 from io import BytesIO
 from docx import Document
 from fastapi.testclient import TestClient
-from main import app, _firmar_sesion, _parsear_datos_academicos
+from main import app
+from auto_prizma.analisis import _parsear_datos_academicos
+from auto_prizma.sesiones import _firmar_sesion
 from test_module.web import _AUTOMATION_JOBS, _AUTOMATION_SYNC, _JOBS
 import threading
 
