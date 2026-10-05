@@ -107,8 +107,9 @@ async def analizar(
                     error="Debes seleccionar el semestre para el test evaluativo."
                 )
 
-            from test_module.web import _extraer_bytes_docx_request, _JOBS, _JOBS_LOCK
-            from test_module.parser import parse_docx_bytes
+            from tests_evaluativos.web import _extraer_bytes_docx_request
+            from tests_evaluativos.estado import _JOBS, _JOBS_LOCK
+            from tests_evaluativos.parser import parse_docx_bytes
 
             content_test, nom_test, err_test = await _extraer_bytes_docx_request(
                 request, test_archivo_docx, test_google_doc_url, modo_test

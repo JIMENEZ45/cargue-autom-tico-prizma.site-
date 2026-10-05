@@ -2,10 +2,10 @@ from io import BytesIO
 
 from docx import Document as DocxDocument
 
-from test_module.models import Severity
-from test_module.parser import parse_document_text, parse_docx_bytes
-from test_module.validation import validate_document
-from test_module.serializer import serialize_test
+from tests_evaluativos.models import Severity
+from tests_evaluativos.parser import parse_document_text, parse_docx_bytes
+from tests_evaluativos.validation import validate_document
+from tests_evaluativos.serializer import serialize_test
 
 
 def test_parse_document_supports_all_prizma_question_types_and_multiple_answers():

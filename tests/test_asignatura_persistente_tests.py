@@ -1,8 +1,8 @@
 import threading
 import time
 
-from test_module import web
-from test_module.models import DocumentTest, TestDocument
+from tests_evaluativos import ejecucion, estado
+from tests_evaluativos.models import DocumentTest, TestDocument
 
 
 def test_asignatura_elegida_en_primer_test_se_reutiliza_en_los_siguientes(monkeypatch):
@@ -21,7 +21,7 @@ def test_asignatura_elegida_en_primer_test_se_reutiliza_en_los_siguientes(monkey
         "programa": "Programa X",
         "asignatura": asignatura_matriz,
     }
-    web._JOBS[job_id] = {
+    estado._JOBS[job_id] = {
         "owner": "tester",
         "document": document,
         "cascada_datos": cascada,
@@ -40,7 +40,7 @@ def test_asignatura_elegida_en_primer_test_se_reutiliza_en_los_siguientes(monkey
             def responder_seleccion():
                 # El callback limpia el Event al comenzar; esperamos a que entre en espera.
                 time.sleep(0.05)
-                sync = web._AUTOMATION_SYNC[job_id]
+                sync = estado._AUTOMATION_SYNC[job_id]
                 sync["seleccion"]["asignatura"] = asignatura_prizma
                 sync["event"].set()
 
@@ -53,10 +53,10 @@ def test_asignatura_elegida_en_primer_test_se_reutiliza_en_los_siguientes(monkey
             observado["asignatura_despues_del_primer_test"] = cascada_recibida.get("asignatura")
             return {"ok": True, "procesados": 3, "total": 3}
 
-    monkeypatch.setattr(web, "PrizmaTestAutomator", FakeAutomator)
+    monkeypatch.setattr(ejecucion, "PrizmaTestAutomator", FakeAutomator)
 
     try:
-        resultado = web.ejecutar_test_job(
+        resultado = ejecucion.ejecutar_test_job(
             job_id=job_id,
             usuario_prizma="usuario",
             clave_prizma="clave",
@@ -65,9 +65,9 @@ def test_asignatura_elegida_en_primer_test_se_reutiliza_en_los_siguientes(monkey
             cascada_override=cascada,
         )
     finally:
-        web._JOBS.pop(job_id, None)
-        web._AUTOMATION_JOBS.pop(job_id, None)
-        web._AUTOMATION_SYNC.pop(job_id, None)
+        estado._JOBS.pop(job_id, None)
+        estado._AUTOMATION_JOBS.pop(job_id, None)
+        estado._AUTOMATION_SYNC.pop(job_id, None)
 
     assert resultado["ok"] is True
     assert observado["elegida"] == asignatura_prizma

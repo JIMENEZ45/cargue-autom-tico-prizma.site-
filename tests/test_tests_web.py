@@ -5,8 +5,8 @@ from fastapi.testclient import TestClient
 
 from main import app
 from auto_prizma.sesiones import _firmar_sesion
-from test_module.models import document_to_dict
-from test_module.parser import parse_docx_bytes
+from tests_evaluativos.models import document_to_dict
+from tests_evaluativos.parser import parse_docx_bytes
 
 
 def _session_client() -> TestClient:

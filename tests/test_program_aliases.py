@@ -1,4 +1,4 @@
-from test_module.automation import normalizar_texto, resolver_variantes_programa
+from tests_evaluativos.automation import normalizar_texto, resolver_variantes_programa
 
 
 def test_negocios_internacionales_incluye_aliases_prizma():

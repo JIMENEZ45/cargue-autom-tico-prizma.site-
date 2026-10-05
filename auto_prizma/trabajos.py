@@ -352,7 +352,8 @@ def _despachar_cargues_pendientes():
 
 
 def _ejecutar_test_en_cargue(trabajo, test_job_id, usuario, contrasena):
-    from test_module.web import ejecutar_test_job, _JOBS, _JOBS_LOCK
+    from tests_evaluativos.estado import _JOBS, _JOBS_LOCK
+    from tests_evaluativos.ejecucion import ejecutar_test_job
     with _JOBS_LOCK:
         job_test = _JOBS.get(test_job_id)
     if not job_test:

@@ -32,10 +32,10 @@ from auto_prizma.trabajos import TRABAJOS
 # MODULO TESTS
 # ============================================================
 
-from test_module.web import router as test_module_router
+from tests_evaluativos.web import router as tests_evaluativos_router
 
 app.state.test_google_loader = _descargar_google_docx_para_tests
 app.state.trabajos_cargue = TRABAJOS
 app.state.historial_cargues = _historial_del_usuario
 app.state.resultados_dir = RESULTADOS_DIR
-app.include_router(test_module_router)
+app.include_router(tests_evaluativos_router)

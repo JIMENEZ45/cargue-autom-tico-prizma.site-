@@ -27,7 +27,16 @@ auto_prizma/                Código de la aplicación web
 motor_prizma.py             Automatización de PRIZMA con Playwright (lectura de la matriz y cargue de actividades)
 drive_resource_policy.py    Reglas para decidir qué recurso de Drive corresponde a cada actividad
 gestionar_usuarios.py       CLI para administrar los usuarios de la interfaz
-test_module/                Módulo de tests evaluativos (parser de .docx, validación, automatización y rutas web)
+tests_evaluativos/          Módulo de tests evaluativos (cuestionarios en PRIZMA a partir de un .docx)
+  models.py                 Estructuras de datos del documento (tests, secciones, preguntas)
+  parser.py                 Lectura del .docx y conversión a esas estructuras
+  validation.py             Validación del documento (errores y advertencias)
+  serializer.py             Exportación a JSON
+  automation.py             Automatización de PRIZMA con Playwright para crear los tests
+  estado.py                 Estado en memoria de los trabajos y credenciales de PRIZMA
+  vistas.py                 HTML del módulo (layout, revisión y tarjeta de estado)
+  ejecucion.py              Ejecución del cargue de tests en segundo plano
+  web.py                    Rutas /tests/...
 tests/                      Pruebas automáticas (pytest)
 scripts/                    Utilidades manuales (p. ej. probar la conexión con PRIZMA)
 static/                     Archivos estáticos (logo)
@@ -41,6 +50,8 @@ data/                       Usuarios, tokens, historial y reportes (no se versio
 2. En el inicio sube o enlaza la matriz y el ZIP / carpeta de Drive; `rutas/analisis.py` los analiza con `analisis.py`, `drive.py` y `drive_zip.py` y muestra el resultado (`vistas.py`).
 3. Al iniciar el cargue, `rutas/cargues.py` lo pone en la cola de `trabajos.py`, que ejecuta `motor_prizma.py` (con los ajustes de `integracion_motor.py`).
 4. Al terminar se guarda el reporte y el historial, consultables desde `rutas/reportes.py`.
+
+Tests evaluativos (`/tests`): el .docx se lee con `parser.py` y se valida con `validation.py`; el usuario lo revisa y corrige en pantalla y luego `ejecucion.py` lo carga en PRIZMA con `automation.py`. Un test también puede cargarse junto con un cargue de actividades (`_ejecutar_test_en_cargue` en `auto_prizma/trabajos.py`).
 
 ## Ejecutar en local
 
