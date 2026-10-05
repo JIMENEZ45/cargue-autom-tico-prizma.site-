@@ -22,3 +22,9 @@ main.py.bak*
 motor_prizma.py.bak*
 main_antes_*.py
 aplicar_*.py
+*_backup*.py
+parche_*.py
+*.zip
+
+# Cache de herramientas
+.pytest_cache/

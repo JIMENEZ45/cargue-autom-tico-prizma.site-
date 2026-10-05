@@ -81,6 +81,7 @@ BASE_DIR = os.path.dirname(
 
 LOGO_PATH = os.path.join(
     BASE_DIR,
+    "static",
     "auto_prizma_logo.png",
 )
 
