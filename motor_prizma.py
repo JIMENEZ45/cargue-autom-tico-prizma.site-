@@ -30,7 +30,7 @@ URL_PRIZMA = "https://admin.prizma.site/inicio-sesion"
 
 VERSION_SCRIPT = "PRUEBA_H5P_NUEVO_GESTION_FINANCIERA_V2"
 
-BUILD_INTERNO = "ESTABILIDAD_COLA_CANCELACION_V10"
+BUILD_INTERNO = "CONFIRMACION_PATCH_DIRECTA_V11"
 
 
 TEXTOS_DESCRIPCION_A_BORRAR = [
@@ -3850,11 +3850,23 @@ def _esperar_archivo_visible(
 # PATCH
 # ============================================================
 
+def _es_patch_actividad_response(response):
+    """Identifica exclusivamente la respuesta PATCH que actualiza una actividad."""
+    try:
+        return (
+            response.request.method.upper() == "PATCH"
+            and "/academic/activity/" in response.url
+        )
+    except Exception:
+        return False
+
+
 def esperar_patch(
     pagina,
     respuestas,
     timeout_ms=15000,
 ):
+    """Fallback historico sobre el listener global de respuestas."""
 
     esperado = 0
 
@@ -3914,7 +3926,15 @@ def verificar_guardado_por_reapertura(
     if not abrir_edicion(pagina, fila):
         return False
 
-    confirmado = archivo_visible(pagina, nombre_recurso)
+    # PRIZMA puede tardar un instante en reconstruir la tarjeta del recurso
+    # despues de guardar. Esperamos de forma adaptativa en vez de consultar
+    # una sola vez inmediatamente despues de abrir la edicion.
+    confirmado = _esperar_archivo_visible(
+        pagina,
+        nombre_recurso,
+        timeout_ms=6000,
+        intervalo_ms=200,
+    )
 
     # Esta reapertura es solo de verificacion: no guardamos otra vez.
     cancelar_edicion_segura(pagina)
@@ -4607,20 +4627,61 @@ def procesar_actividad(
         "💾 Guardando..."
     )
 
-    try:
+    # La confirmacion principal queda enlazada al mismo clic que guarda.
+    # Esto evita depender exclusivamente del listener global y elimina una
+    # posible condicion de carrera entre el clic y el registro de respuestas.
+    respuesta_patch = None
+    error_clic_guardar = None
 
-        boton_guardar.click(
-            timeout=10000
+    try:
+        with pagina.expect_response(
+            _es_patch_actividad_response,
+            timeout=45000,
+        ) as respuesta_info:
+            boton_guardar.click(
+                timeout=10000
+            )
+
+        respuesta_obj = respuesta_info.value
+        respuesta_patch = {
+            "metodo": respuesta_obj.request.method.upper(),
+            "status": respuesta_obj.status,
+            "url": respuesta_obj.url,
+        }
+        print(
+            "✅ PATCH capturado directamente:",
+            respuesta_patch["status"],
         )
 
-    except Exception:
+    except PlaywrightTimeoutError:
+        print(
+            "⚠️ No se capturó el PATCH con expect_response; "
+            "revisando el listener global..."
+        )
 
-        captura[
-            "activa"
-        ] = False
+        # El listener global se conserva como respaldo y diagnostico.
+        respuesta_patch = esperar_patch(
+            pagina,
+            respuestas,
+            timeout_ms=2000,
+        )
 
+    except Exception as error_guardado:
+        error_clic_guardar = error_guardado
+
+    captura[
+        "activa"
+    ] = False
+
+    if error_clic_guardar is not None:
         cancelar_edicion_segura(
             pagina
+        )
+
+        print(
+            "❌ Error al ejecutar el guardado:",
+            type(error_clic_guardar).__name__,
+            str(error_clic_guardar),
         )
 
         return {
@@ -4632,16 +4693,6 @@ def procesar_actividad(
         }
 
     # 11. PATCH
-
-    respuesta_patch = esperar_patch(
-        pagina,
-        respuestas,
-        timeout_ms=30000,
-    )
-
-    captura[
-        "activa"
-    ] = False
 
     if respuesta_patch is None:
 
