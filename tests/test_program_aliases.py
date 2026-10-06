@@ -1,4 +1,4 @@
-from tests_evaluativos.automation import normalizar_texto, resolver_variantes_programa
+from auto_prizma.evaluative_tests.automation import normalizar_texto, resolver_variantes_programa
 
 
 def test_negocios_internacionales_incluye_aliases_prizma():
@@ -25,7 +25,7 @@ def test_programa_desconocido_se_conserva_sin_relajarlo():
 
 
 def test_motor_conserva_equivalencias_historicas_de_programa():
-    from motor_prizma import obtener_variantes_programa
+    from auto_prizma.automation.prizma.engine import obtener_variantes_programa
 
     casos = {
         "Administración de Empresas": "Tecnología en Gestión Empresarial",
@@ -41,7 +41,7 @@ def test_motor_conserva_equivalencias_historicas_de_programa():
 
 
 def test_motor_incluye_todas_las_variantes_confirmadas_de_programa():
-    from motor_prizma import obtener_variantes_programa
+    from auto_prizma.automation.prizma.engine import obtener_variantes_programa
 
     casos = {
         "Administración de Empresas": [
@@ -87,7 +87,7 @@ def test_tests_incluye_todas_las_variantes_confirmadas_de_programa():
             assert normalizar_texto(alias) in variantes
 
 def test_motor_acepta_prefijos_uxt_con_y_sin_separadores():
-    from motor_prizma import limpiar_prefijo_tecnico_recurso
+    from auto_prizma.automation.prizma.engine import limpiar_prefijo_tecnico_recurso
 
     esperado = "relacion entre innovacion"
     assert limpiar_prefijo_tecnico_recurso("U1T1 Relación entre innovación.h5p") == esperado

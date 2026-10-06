@@ -1,8 +1,8 @@
 import threading
 import time
 
-from tests_evaluativos import ejecucion, estado
-from tests_evaluativos.models import DocumentTest, TestDocument
+from auto_prizma.evaluative_tests import execution as ejecucion, state as estado
+from auto_prizma.evaluative_tests.models import DocumentTest, TestDocument
 
 
 def test_asignatura_elegida_en_primer_test_se_reutiliza_en_los_siguientes(monkeypatch):
