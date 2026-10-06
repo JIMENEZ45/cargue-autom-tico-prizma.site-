@@ -12,25 +12,12 @@ from fastapi.responses import (
     RedirectResponse,
 )
 import zipfile
-import os
-import uuid
-import shutil
 
 from auto_prizma.core.application import app
-from auto_prizma.core.config import (
-    RESULTADOS_DIR,
-    TEMP_DIR,
-    UPLOADS_DIR,
-)
+from auto_prizma.core.clock import _ahora_colombia_iso
 from auto_prizma.services.auth import _usuario_actual
 from auto_prizma.integrations.google.drive import _resolver_hoja_objetivo
-from auto_prizma.services.drive_zip_validation import _prevalidar_recursos_drive_zip_ultrarapido
-from auto_prizma.services.upload_jobs import (
-    TRABAJOS,
-    _ahora_colombia_iso,
-    _cursos_desde_hojas,
-    _nombre_reporte,
-)
+from auto_prizma.services.upload_jobs import create_analyzed_job
 from auto_prizma.services.matrix_analysis import (
     _normalizar_contenido_matriz_archivo,
     _parsear_datos_academicos,
@@ -108,7 +95,7 @@ async def analizar(
                 )
 
             from auto_prizma.evaluative_tests.routes import _extraer_bytes_docx_request
-            from auto_prizma.evaluative_tests.state import _JOBS, _JOBS_LOCK
+            from auto_prizma.evaluative_tests.state import register_test_job
             from auto_prizma.evaluative_tests.parser import parse_docx_bytes
 
             content_test, nom_test, err_test = await _extraer_bytes_docx_request(
@@ -122,20 +109,18 @@ async def analizar(
             except Exception as exc_p:
                 return generar_html(error=f"Error al procesar documento de test: {exc_p}")
 
-            test_job_id = uuid.uuid4().hex
-            with _JOBS_LOCK:
-                _JOBS[test_job_id] = {
-                    "owner": _usuario_actual(),
-                    "document": document_test,
-                    "created_at": _ahora_colombia_iso(),
-                    "cascada_datos": {
-                        "programa": datos_acad["programa"],
-                        "pensum": datos_acad["pensum"],
-                        "nivel": semestre_val,
-                        "asignatura": datos_acad["asignatura"],
-                        "codigo_asignatura": datos_acad["codigo_asignatura"],
-                    },
-                }
+            test_job_id = register_test_job(
+                _usuario_actual(),
+                document_test,
+                _ahora_colombia_iso(),
+                cascada_datos={
+                    "programa": datos_acad["programa"],
+                    "pensum": datos_acad["pensum"],
+                    "nivel": semestre_val,
+                    "asignatura": datos_acad["asignatura"],
+                    "codigo_asignatura": datos_acad["codigo_asignatura"],
+                },
+            )
 
             if not procesar_recursos:
                 return RedirectResponse(f"/tests/{test_job_id}/revision", status_code=303)
@@ -207,130 +192,36 @@ async def analizar(
             return generar_html(error="El ZIP no es válido.")
 
         # ====================================================
-        # CREAR TRABAJO
+        # CREAR TRABAJO (guarda archivos, prevalida Drive-ZIP y lo registra)
         # ====================================================
 
-        trabajo_id = uuid.uuid4().hex
-        carpeta_trabajo = os.path.join(UPLOADS_DIR, trabajo_id)
-        os.makedirs(carpeta_trabajo, exist_ok=True)
-
-        ruta_excel = os.path.join(carpeta_trabajo, "matriz.xlsx")
-        ruta_zip = os.path.join(carpeta_trabajo, "recursos.zip")
-
-        with open(ruta_excel, "wb") as archivo:
-            archivo.write(contenido_excel)
-
-        with open(ruta_zip, "wb") as archivo:
-            archivo.write(contenido_zip)
-
-        carpeta_temp = os.path.join(TEMP_DIR, trabajo_id)
-        os.makedirs(carpeta_temp, exist_ok=True)
-
-        if modo_matriz == "link":
-            preflight_drive = _prevalidar_recursos_drive_zip_ultrarapido(
-                google_sheet_url,
-                ruta_excel,
-                ruta_zip,
-                procesar_ovi,
-                procesar_ova,
-                procesar_retos,
-                hoja_objetivo,
-            )
-
-            recursos_drive_resueltos = preflight_drive.pop(
-                "_mapa_resueltos",
-                {},
-            )
-
-            if not preflight_drive.get("ok"):
-                errores_drive = preflight_drive.get("errores") or []
-                resumen_errores = " | ".join(errores_drive[:8])
-
-                if len(errores_drive) > 8:
-                    resumen_errores += (
-                        " | ... y "
-                        + str(len(errores_drive) - 8)
-                        + " error(es) más."
-                    )
-
-                shutil.rmtree(carpeta_trabajo, ignore_errors=True)
-                shutil.rmtree(carpeta_temp, ignore_errors=True)
-
-                return generar_html(
-                    error=(
-                        "La validación Google Drive vs ZIP encontró problemas. "
-                        + resumen_errores
-                    )
-                )
-        else:
-            # En modo archivo no se consulta Google. El motor conserva su
-            # resolvedor seguro de recursos del ZIP y nunca elige ambiguos.
-            recursos_drive_resueltos = {}
-            preflight_drive = {
-                "ok": True,
-                "modo": "archivo",
-                "total_actividades": sum(
-                    len(hoja.get("actividades") or []) for hoja in hojas
-                ),
-                "validadas_drive": 0,
-                "coincidencias_zip": 0,
-                "errores": [],
-                "advertencias": [],
-                "recursos": [],
-            }
-
-        cursos_trabajo = _cursos_desde_hojas(hojas)
-        ruta_reporte = os.path.join(
-            RESULTADOS_DIR,
-            _nombre_reporte(cursos_trabajo, trabajo_id),
-        )
-
-        TRABAJOS[trabajo_id] = {
-            "id": trabajo_id,
-            "ruta_excel": ruta_excel,
-            "ruta_zip": ruta_zip,
-            "carpeta_temp": carpeta_temp,
-            "ruta_reporte": ruta_reporte,
-            "procesar_ovi": procesar_ovi,
-            "procesar_ova": procesar_ova,
-            "procesar_retos": procesar_retos,
-            "etapa": "analizado",
-            "mensaje": "Archivos analizados correctamente.",
-            "total": 0,
-            "procesadas": 0,
-            "exitosas": 0,
-            "errores": 0,
-            "terminado": False,
-            "detalle_actividades": [],
-            "recursos_drive_resueltos": recursos_drive_resueltos,
-            "hoja_objetivo": hoja_objetivo,
-            "origen_matriz": modo_matriz,
-            "nombre_matriz": nombre_matriz,
-            "usuario_app": _usuario_actual(),
-            "cursos": cursos_trabajo,
-            "historial_registrado": False,
-            "creado_en": _ahora_colombia_iso(),
-            "cancelar_solicitado": False,
-        }
-
-        resultado = {
-            "hojas": hojas,
-            "zip": zip_info,
-            "drive": preflight_drive,
-            "origen_matriz": modo_matriz,
-            "nombre_matriz": nombre_matriz,
-        }
-
+        test_info = None
         if procesar_test and test_job_id and document_test:
-            resultado["test_info"] = {
+            test_info = {
                 "test_job_id": test_job_id,
                 "nombre_documento": nom_test,
                 "cantidad_tests": len(document_test.tests),
                 "cantidad_preguntas": sum(len(sec.questions) for t in document_test.tests for sec in t.sections),
             }
-            TRABAJOS[trabajo_id]["test_job_id"] = test_job_id
 
-        TRABAJOS[trabajo_id]["resultado_analisis"] = resultado
+        # Si la prevalidacion falla, el servicio lanza ValueError con el
+        # mensaje para el usuario y el except de abajo lo muestra.
+        trabajo_id, resultado = create_analyzed_job(
+            contenido_excel,
+            contenido_zip,
+            hojas,
+            zip_info,
+            modo_matriz,
+            google_sheet_url,
+            hoja_objetivo,
+            nombre_matriz,
+            procesar_ovi,
+            procesar_ova,
+            procesar_retos,
+            _usuario_actual(),
+            test_job_id=test_job_id,
+            test_info=test_info,
+        )
 
         return generar_html(
             resultado=resultado,

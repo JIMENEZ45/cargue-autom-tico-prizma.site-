@@ -7,10 +7,12 @@ import json
 import os
 import threading
 import sys
+import uuid
 
 from fastapi import Request
 
 from auto_prizma.core.config import BASE_DIR
+from auto_prizma.core.storage import write_json_atomic
 
 from .models import Severity
 
@@ -46,10 +48,39 @@ def _cargar_credenciales_prizma(usuario: str) -> dict:
 def _guardar_credenciales_prizma(usuario: str, creds: dict):
     ruta = _ruta_token_prizma(usuario)
     try:
-        with open(ruta, "w", encoding="utf-8") as f:
-            json.dump(creds, f, ensure_ascii=False, indent=2)
+        write_json_atomic(ruta, creds)
     except Exception:
         pass
+
+
+def register_test_job(owner: str, document, created_at: str, cascada_datos: dict | None = None) -> str:
+    """Registra en memoria un documento de tests ya analizado y devuelve su id.
+
+    Lo usan el modulo /tests y el analisis combinado de la pagina de inicio.
+
+    Args:
+        owner: usuario de la aplicacion dueno del analisis.
+        document: TestDocument resultado del parser.
+        created_at: fecha ISO de creacion.
+        cascada_datos: datos academicos (programa, pensum, nivel, asignatura)
+            cuando el test viene del formulario de inicio.
+
+    Returns:
+        Identificador del job en _JOBS.
+    """
+    job_id = uuid.uuid4().hex
+    job = {
+        "owner": owner,
+        "document": document,
+        "created_at": created_at,
+    }
+    if cascada_datos is not None:
+        job["cascada_datos"] = cascada_datos
+
+    with _JOBS_LOCK:
+        _JOBS[job_id] = job
+
+    return job_id
 
 
 def _user(request: Request) -> str:

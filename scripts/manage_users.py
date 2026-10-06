@@ -15,7 +15,6 @@ de PowerShell, porque se pide con getpass.
 """
 
 import getpass
-import json
 import os
 import sys
 

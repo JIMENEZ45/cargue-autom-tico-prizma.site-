@@ -11,6 +11,7 @@ import re
 import threading
 from datetime import datetime
 
+from auto_prizma.core.storage import write_text_atomic
 from auto_prizma.core.config import (
     DATA_DIR,
     GOOGLE_AUTH_URI,
@@ -166,21 +167,9 @@ def _guardar_credenciales_google(credenciales, usuario=None):
             "No hay sesion activa para guardar el token de Google."
         )
 
-    destino = _ruta_token_google(usuario)
-    temporal = destino + ".tmp"
-
-    with open(
-        temporal,
-        "w",
-        encoding="utf-8",
-    ) as archivo:
-        archivo.write(
-            credenciales.to_json()
-        )
-
-    os.replace(
-        temporal,
-        destino,
+    write_text_atomic(
+        _ruta_token_google(usuario),
+        credenciales.to_json(),
     )
 
 

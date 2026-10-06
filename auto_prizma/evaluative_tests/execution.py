@@ -233,7 +233,7 @@ def ejecutar_test_job(
             return
         estado_final = "finalizado" if auto_state["estado"] == "completado" else auto_state["estado"]
         try:
-            from auto_prizma.services.upload_jobs import _registrar_historial_test
+            from auto_prizma.services.history import _registrar_historial_test
             _registrar_historial_test(job_id, ruta_reporte, cascada, estado_final, auto_state.get("owner", ""))
         except Exception:
             pass

@@ -87,6 +87,8 @@ auto_prizma/                  Código de la aplicación
     application.py            Instancia FastAPI compartida
     config.py                 Configuración central: carpetas, variables de entorno, sesión,
                               límites de Google/Drive, cola de cargues, URL de PRIZMA y navegador
+    storage.py                Lectura y escritura atómica de archivos de datos (JSON y texto)
+    clock.py                  Hora de Colombia para historial, reportes y estados
   api/routes/                 Rutas web (cada módulo registra sus rutas sobre la app)
     static_files.py           Logo, estilos y script de tema
     auth.py                   Middleware de sesión, login, salir y cambio de contraseña
@@ -98,7 +100,9 @@ auto_prizma/                  Código de la aplicación
     auth.py                   Usuarios, contraseñas, bloqueo por intentos y cookies de sesión
     matrix_analysis.py        Lectura de la matriz (CSV/Excel/Sheets) y análisis de matriz y ZIP
     drive_zip_validation.py   Relación Drive ↔ ZIP, avisos y prevalidación rápida
-    upload_jobs.py            Estado de cargues, historial, reportes y cola de ejecución
+    upload_jobs.py            Estado de cargues, cola de ejecución y servicios que usan las rutas
+                              (crear, iniciar, cancelar y consultar trabajos)
+    history.py                Historial de cargues y reportes CSV (por usuario)
   integrations/google/        Integración con Google
     oauth.py                  Conexión OAuth con Google por usuario
     drive.py                  Lectura de enlaces en Google Sheets y listado de carpetas de Drive
@@ -107,6 +111,7 @@ auto_prizma/                  Código de la aplicación
     engine_overrides.py       Ajustes que se aplican sobre el motor al arrancar
   domain/
     drive_resource_policy.py  Reglas para decidir qué recurso de Drive corresponde a cada actividad
+    file_names.py             Nombre base y clave exacta de nombres de archivo
   web/
     views.py                  HTML de la página principal de análisis y cargue
   evaluative_tests/           Módulo de tests evaluativos (cuestionarios en PRIZMA a partir de un .docx)

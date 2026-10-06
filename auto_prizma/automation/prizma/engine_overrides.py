@@ -17,7 +17,7 @@ from auto_prizma.integrations.google.drive import (
     _misma_hoja,
     _recurso_resuelto_thread,
 )
-from auto_prizma.services.drive_zip_validation import _clave_nombre_drive_zip
+from auto_prizma.domain.file_names import exact_name_key
 
 
 def _validar_drive_desde_preflight(actividad):
@@ -108,7 +108,7 @@ def _resolver_zip_por_actividad_fallback(
 
         candidatos = list(
             indice_zip.get("exacto", {}).get(
-                _clave_nombre_drive_zip(nombre),
+                exact_name_key(nombre),
                 [],
             )
         )
@@ -145,7 +145,7 @@ def _resolver_recurso_desde_preflight(
         )
 
     nombre_esperado = str(resuelto.get("nombre") or "").strip()
-    nombre_esperado_clave = _clave_nombre_drive_zip(nombre_esperado)
+    nombre_esperado_clave = exact_name_key(nombre_esperado)
     miembro_esperado = str(resuelto.get("miembro_zip") or "").strip()
 
     # El preflight ya resolvio exactamente que miembro del ZIP corresponde a
@@ -161,7 +161,7 @@ def _resolver_recurso_desde_preflight(
         exactos = [
             recurso
             for recurso in indice_recursos
-            if _clave_nombre_drive_zip(recurso.get("nombre")) == nombre_esperado_clave
+            if exact_name_key(recurso.get("nombre")) == nombre_esperado_clave
         ]
 
     if len(exactos) == 0:

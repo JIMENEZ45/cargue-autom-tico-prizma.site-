@@ -7,7 +7,6 @@ import html
 import io
 import json
 import threading
-import uuid
 import zipfile
 from datetime import datetime, timezone
 
@@ -22,12 +21,11 @@ from .state import (
     _AUTOMATION_JOBS,
     _AUTOMATION_LOCK,
     _AUTOMATION_SYNC,
-    _JOBS,
-    _JOBS_LOCK,
     _es_google_conectado,
     _guardar_credenciales_prizma,
     _job_for,
     _user,
+    register_test_job,
 )
 from .views import (
     _layout,
@@ -314,13 +312,11 @@ async def analyze_tests(
             status_code=400,
         )
 
-    job_id = uuid.uuid4().hex
-    with _JOBS_LOCK:
-        _JOBS[job_id] = {
-            "owner": _user(request),
-            "document": document,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-        }
+    job_id = register_test_job(
+        _user(request),
+        document,
+        datetime.now(timezone.utc).isoformat(),
+    )
     return RedirectResponse(f"/tests/{job_id}/revision", status_code=303)
 
 
@@ -412,7 +408,7 @@ async def ejecutar_prizma(
 
     ruta_reporte_test = None
     if not simulacion:
-        from auto_prizma.services.upload_jobs import _ruta_reporte_test
+        from auto_prizma.services.history import _ruta_reporte_test
         ruta_reporte_test = _ruta_reporte_test(cascada, job_id)
 
     threading.Thread(

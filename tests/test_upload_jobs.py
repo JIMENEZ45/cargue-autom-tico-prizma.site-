@@ -75,3 +75,103 @@ def test_password_is_gone_after_the_upload_thread_finishes(monkeypatch, trabajo_
 
     assert recibidas == [CLAVE]  # el motor si recibio la contrasena
     assert not _contiene(upload_jobs.TRABAJOS[trabajo_en_memoria], CLAVE)
+
+
+# ============================================================
+# SERVICIOS QUE USAN LAS RUTAS
+# ============================================================
+
+@pytest.fixture
+def trabajos_aislados(monkeypatch):
+    """TRABAJOS y cola vacios solo para la prueba."""
+    monkeypatch.setattr(upload_jobs, "TRABAJOS", {})
+    monkeypatch.setattr(upload_jobs, "COLA_CARGUES", upload_jobs.deque())
+    return upload_jobs.TRABAJOS
+
+
+def _trabajo(trabajo_id, usuario="ana", **campos):
+    base = {
+        "id": trabajo_id, "usuario_app": usuario, "etapa": "analizado", "mensaje": "",
+        "total": 3, "procesadas": 1, "exitosas": 1, "errores": 0, "terminado": False,
+        "ruta_reporte": "no_existe.csv",
+    }
+    base.update(campos)
+    return base
+
+
+def test_cancel_job_in_queue_cancels_immediately_and_drops_credentials(trabajos_aislados):
+    trabajos_aislados["t1"] = _trabajo(
+        "t1", etapa="en_cola", usuario_prizma_temporal="u", contrasena_prizma_temporal=CLAVE,
+    )
+    upload_jobs.COLA_CARGUES.append("t1")
+
+    assert upload_jobs.cancel_job("t1", "ANA") == "cancelado"
+
+    trabajo = trabajos_aislados["t1"]
+    assert trabajo["etapa"] == "cancelado" and trabajo["terminado"] is True
+    assert "t1" not in upload_jobs.COLA_CARGUES
+    assert not _contiene(trabajo, CLAVE)
+
+
+def test_cancel_job_running_only_requests_stop(trabajos_aislados):
+    trabajos_aislados["t2"] = _trabajo("t2", etapa="procesando")
+
+    assert upload_jobs.cancel_job("t2", "ana") == "solicitado"
+    assert trabajos_aislados["t2"]["cancelar_solicitado"] is True
+    assert trabajos_aislados["t2"]["etapa"] == "procesando"
+
+
+def test_cancel_job_rejects_other_users_and_ignores_finished(trabajos_aislados):
+    trabajos_aislados["t3"] = _trabajo("t3", etapa="procesando")
+    trabajos_aislados["t4"] = _trabajo("t4", etapa="finalizado", terminado=True)
+
+    assert upload_jobs.cancel_job("t3", "beto") == "no_encontrado"
+    assert upload_jobs.cancel_job("no-existe", "ana") == "no_encontrado"
+    assert upload_jobs.cancel_job("t4", "ana") == "terminado"
+    assert "cancelar_solicitado" not in trabajos_aislados["t3"]
+
+
+def test_public_job_status_only_for_owner_and_without_credentials(trabajos_aislados):
+    trabajos_aislados["t5"] = _trabajo("t5", contrasena_prizma_temporal=CLAVE)
+
+    estado = upload_jobs.public_job_status("t5", "ana")
+
+    assert upload_jobs.public_job_status("t5", "beto") is None
+    assert set(estado) == {
+        "etapa", "mensaje", "total", "procesadas", "exitosas", "errores", "terminado",
+        "detalle_actividades", "reporte_disponible", "posicion_cola", "cancelar_solicitado",
+    }
+    assert estado["reporte_disponible"] is False
+    assert not _contiene(estado, CLAVE)
+
+
+def test_active_jobs_filters_finished_and_sorts_oldest_first(trabajos_aislados):
+    trabajos_aislados["nuevo"] = _trabajo("nuevo", etapa="procesando", iniciado_en="2026-10-06T10:05:00")
+    trabajos_aislados["viejo"] = _trabajo("viejo", etapa="en_cola", encolado_en="2026-10-06T10:00:00")
+    trabajos_aislados["listo"] = _trabajo("listo", etapa="finalizado", terminado=True)
+    trabajos_aislados["analizado"] = _trabajo("analizado")
+
+    assert [t["id"] for t in upload_jobs.active_jobs()] == ["viejo", "nuevo"]
+
+
+@pytest.mark.parametrize("acceso_ok", [True, False])
+def test_validate_access_and_enqueue(monkeypatch, trabajos_aislados, acceso_ok):
+    trabajos_aislados["t6"] = _trabajo("t6")
+    monkeypatch.setattr(upload_jobs, "CARGUES_ACTIVOS", upload_jobs.MAX_CARGUES_SIMULTANEOS)
+    monkeypatch.setattr(
+        upload_jobs,
+        "validar_credenciales_prizma",
+        lambda usuario, clave: {"ok": acceso_ok, "mensaje": "Credenciales rechazadas."},
+    )
+
+    encolado, mensaje = upload_jobs.validate_access_and_enqueue("t6", "usuario", CLAVE)
+
+    trabajo = trabajos_aislados["t6"]
+    if acceso_ok:
+        assert (encolado, mensaje) == (True, "")
+        assert trabajo["etapa"] == "en_cola"
+        assert list(upload_jobs.COLA_CARGUES) == ["t6"]
+    else:
+        assert (encolado, mensaje) == (False, "Credenciales rechazadas.")
+        assert trabajo["etapa"] == "analizado"
+        assert not _contiene(trabajo, CLAVE)

@@ -9,26 +9,24 @@ from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
 )
-from auto_prizma.automation.prizma.engine import validar_credenciales_prizma
-import os
 import html
 from datetime import datetime
 
 from auto_prizma.core.application import app
+from auto_prizma.core.config import ZONA_HORARIA_COLOMBIA
 from auto_prizma.services.auth import (
     _es_de,
     _nombre_visible,
     _usuario_actual,
 )
 from auto_prizma.services.upload_jobs import (
-    COLA_CARGUES,
-    COLA_CONDICION,
     TRABAJOS,
-    ZONA_HORARIA_COLOMBIA,
-    _ahora_colombia_iso,
-    _encolar_trabajo,
     _posicion_en_cola,
     _validar_seleccion_actividades,
+    active_jobs,
+    cancel_job,
+    public_job_status,
+    validate_access_and_enqueue,
 )
 from auto_prizma.web.views import generar_html
 
@@ -82,21 +80,19 @@ def iniciar_trabajo(
         return HTMLResponse("<h2>Este trabajo ya fue iniciado.</h2>")
 
     # Validar el acceso antes de encolar el curso.
-    trabajo["etapa"] = "validando_login"
-    trabajo["mensaje"] = "Validando usuario y contraseña en PRIZMA..."
-    validacion = validar_credenciales_prizma(usuario_prizma, contrasena_prizma)
+    encolado, mensaje_error = validate_access_and_enqueue(
+        trabajo_id,
+        usuario_prizma,
+        contrasena_prizma,
+    )
 
-    if not validacion.get("ok"):
-        trabajo["etapa"] = "analizado"
-        trabajo["mensaje"] = validacion.get("mensaje", "No fue posible validar el acceso a PRIZMA.")
+    if not encolado:
         return generar_html(
             resultado=trabajo.get("resultado_analisis"),
             trabajo_id=trabajo_id,
-            error=trabajo["mensaje"],
+            error=mensaje_error,
             seleccion_actual=seleccion_validada,
         )
-
-    _encolar_trabajo(trabajo_id, usuario_prizma, contrasena_prizma)
 
     html_progreso = r"""
     <!DOCTYPE html>
@@ -473,12 +469,7 @@ def _pagina_cargues_activos(trabajos, usuario_actual=None):
 def cargue_actual():
     usuario = _usuario_actual()
 
-    activos = [
-        trabajo for trabajo in TRABAJOS.values()
-        if not trabajo.get("terminado")
-        and trabajo.get("etapa") in {"en_cola", "iniciando", "login", "preparando", "procesando", "validando_login", "cargando_test"}
-    ]
-    activos.sort(key=lambda item: item.get("encolado_en") or item.get("iniciado_en") or item.get("creado_en", ""))
+    activos = active_jobs()
     if not activos:
         return _pagina_sin_cargue_actual()
     return _pagina_cargues_activos(activos, usuario)
@@ -486,37 +477,10 @@ def cargue_actual():
 
 @app.post("/cancelar/{trabajo_id}", response_class=HTMLResponse)
 def cancelar_trabajo(trabajo_id: str):
-    with COLA_CONDICION:
-        trabajo = TRABAJOS.get(trabajo_id)
-        if not trabajo or not _es_de(trabajo, _usuario_actual()):
-            return HTMLResponse("<h2>Proceso no encontrado.</h2>", status_code=404)
+    if cancel_job(trabajo_id, _usuario_actual()) == "no_encontrado":
+        return HTMLResponse("<h2>Proceso no encontrado.</h2>", status_code=404)
 
-        if trabajo.get("terminado"):
-            return HTMLResponse(
-                "<script>window.location='/cargue-actual';</script>"
-            )
-
-        trabajo["cancelar_solicitado"] = True
-
-        if trabajo.get("etapa") == "en_cola":
-            try:
-                COLA_CARGUES.remove(trabajo_id)
-            except ValueError:
-                pass
-            trabajo.pop("usuario_prizma_temporal", None)
-            trabajo.pop("contrasena_prizma_temporal", None)
-            trabajo["etapa"] = "cancelado"
-            trabajo["mensaje"] = "Proceso cancelado antes de iniciar."
-            trabajo["terminado"] = True
-            trabajo["finalizado_en"] = _ahora_colombia_iso()
-        else:
-            trabajo["mensaje"] = (
-                "Cancelación solicitada. El proceso se detendrá de forma segura "
-                "al terminar la actividad actual."
-            )
-
-        COLA_CONDICION.notify_all()
-
+    # Terminado, cancelado en cola o cancelacion solicitada: volver al listado.
     return HTMLResponse("<script>window.location='/cargue-actual';</script>")
 
 
@@ -542,11 +506,12 @@ def estado_trabajo(
     trabajo_id: str,
 ):
 
-    trabajo = TRABAJOS.get(
-        trabajo_id
+    estado = public_job_status(
+        trabajo_id,
+        _usuario_actual(),
     )
 
-    if not trabajo or not _es_de(trabajo, _usuario_actual()):
+    if estado is None:
 
         return JSONResponse(
             {
@@ -556,38 +521,4 @@ def estado_trabajo(
             status_code=404,
         )
 
-    return {
-        "etapa":
-            trabajo["etapa"],
-
-        "mensaje":
-            trabajo["mensaje"],
-
-        "total":
-            trabajo["total"],
-
-        "procesadas":
-            trabajo["procesadas"],
-
-        "exitosas":
-            trabajo["exitosas"],
-
-        "errores":
-            trabajo["errores"],
-
-        "terminado":
-            trabajo["terminado"],
-
-        "detalle_actividades":
-            trabajo.get(
-                "detalle_actividades",
-                [],
-            ),
-
-        "reporte_disponible":
-            os.path.isfile(
-                trabajo["ruta_reporte"]
-            ),
-        "posicion_cola": _posicion_en_cola(trabajo_id),
-        "cancelar_solicitado": bool(trabajo.get("cancelar_solicitado")),
-    }
+    return estado

@@ -1,22 +1,30 @@
-"""Estado de los cargues, historial, reportes y cola de ejecucion con limite de cargues simultaneos.
+"""Estado de los cargues y cola de ejecucion con limite de cargues simultaneos.
+
+El historial y los reportes viven en auto_prizma.services.history.
 """
 
 from auto_prizma.automation.prizma import engine as motor_prizma_modulo
-from auto_prizma.automation.prizma.engine import ejecutar_cargue
-import os
+from auto_prizma.automation.prizma.engine import (
+    ejecutar_cargue,
+    validar_credenciales_prizma,
+)
 import json
-import re
+import os
+import shutil
 import threading
+import uuid
 from collections import deque
-from datetime import datetime
 
+from auto_prizma.core.clock import _ahora_colombia_iso
 from auto_prizma.core.config import (
-    HISTORIAL_PATH,
     MAX_CARGUES_SIMULTANEOS,
     RESULTADOS_DIR,
-    ZONA_HORARIA_COLOMBIA,
+    TEMP_DIR,
+    UPLOADS_DIR,
 )
-from auto_prizma.services.auth import USUARIO_ACTUAL
+from auto_prizma.services.auth import USUARIO_ACTUAL, _es_de
+from auto_prizma.services.drive_zip_validation import _prevalidar_recursos_drive_zip_ultrarapido
+from auto_prizma.services.history import _nombre_reporte, _registrar_reporte_final
 from auto_prizma.integrations.google.drive import _DRIVE_THREAD_LOCAL
 
 
@@ -25,14 +33,12 @@ from auto_prizma.integrations.google.drive import _DRIVE_THREAD_LOCAL
 # ============================================================
 
 TRABAJOS = {}
-HISTORIAL_LOCK = threading.Lock()
 TRABAJOS_LOCK = threading.RLock()
 COLA_CARGUES = deque()
 COLA_CONDICION = threading.Condition(TRABAJOS_LOCK)
 
 # Cuantos cargues pueden correr al mismo tiempo: MAX_CARGUES_SIMULTANEOS
-# (maximo 2, ver auto_prizma.core.config). ZONA_HORARIA_COLOMBIA tambien
-# vive en la configuracion central y se reexporta desde aqui.
+# (maximo 2, ver auto_prizma.core.config).
 
 CARGUES_ACTIVOS = 0
 
@@ -90,23 +96,6 @@ def _validar_seleccion_actividades(valores, resultado):
     return seleccion
 
 
-def _ahora_colombia():
-    return datetime.now(ZONA_HORARIA_COLOMBIA)
-
-
-def _ahora_colombia_iso():
-    return _ahora_colombia().isoformat(timespec="seconds")
-
-
-def _sanitizar_parte_nombre(valor, limite=70):
-    texto = str(valor or "").strip()
-    texto = re.sub(r'[\\/:*?"<>|]+', "-", texto)
-    texto = re.sub(r"\s+", " ", texto).strip(" .-")
-    if not texto:
-        texto = "Sin nombre"
-    return texto[:limite].rstrip()
-
-
 def _cursos_desde_hojas(hojas):
     cursos = []
     vistos = set()
@@ -121,99 +110,6 @@ def _cursos_desde_hojas(hojas):
         cursos.append({"curso": curso, "programa": programa})
 
     return cursos
-
-
-def _nombre_reporte(cursos, trabajo_id):
-    fecha = _ahora_colombia().strftime("%Y-%m-%d_%H-%M-%S")
-
-    if cursos:
-        curso = _sanitizar_parte_nombre(cursos[0]["curso"], 58)
-        programa = _sanitizar_parte_nombre(cursos[0]["programa"], 58)
-        extra = ""
-        if len(cursos) > 1:
-            extra = f"_y_{len(cursos) - 1}_curso_mas"
-        return f"{fecha} - {curso} - {programa}{extra} - {trabajo_id[:6]}.csv"
-
-    return f"{fecha} - resultado_prizma - {trabajo_id[:6]}.csv"
-
-
-def _ruta_reporte_test(cascada, test_job_id):
-    """Ruta del CSV de reporte para un Test Evaluativo ejecutado SOLO
-    (sin OVI/OVA/Retos), fuera de la cola de cargues normal."""
-    fecha = _ahora_colombia().strftime("%Y-%m-%d_%H-%M-%S")
-    asignatura = _sanitizar_parte_nombre((cascada or {}).get("asignatura") or "Test Evaluativo", 58)
-    nombre = f"{fecha} - {asignatura} - Test - {test_job_id[:6]}.csv"
-    return os.path.join(RESULTADOS_DIR, nombre)
-
-
-def _registrar_historial_test(test_job_id, ruta_reporte, cascada, estado_final, usuario_app):
-    """Registra en data/historial.json el resultado de un Test Evaluativo
-    ejecutado SOLO (flujo exclusivo, sin recursos OVI/OVA/Retos)."""
-    cascada = cascada or {}
-    cursos = [{
-        "curso": f"Test Evaluativo: {cascada.get('asignatura') or 'Sin asignatura'}",
-        "programa": cascada.get("programa") or "Programa sin nombre",
-    }]
-    return _agregar_registro_historial(test_job_id, ruta_reporte, cursos, estado_final, usuario_app, tipo="test")
-
-
-def _cargar_historial():
-    if not os.path.isfile(HISTORIAL_PATH):
-        return []
-
-    try:
-        with open(HISTORIAL_PATH, "r", encoding="utf-8") as archivo:
-            datos = json.load(archivo)
-        return datos if isinstance(datos, list) else []
-    except Exception:
-        return []
-
-
-def _guardar_historial(registros):
-    temporal = HISTORIAL_PATH + ".tmp"
-    with open(temporal, "w", encoding="utf-8") as archivo:
-        json.dump(registros, archivo, ensure_ascii=False, indent=2)
-    os.replace(temporal, HISTORIAL_PATH)
-
-
-def _agregar_registro_historial(registro_id, ruta_reporte, cursos, estado_final, usuario_app, tipo=None):
-    """Escribe una fila en data/historial.json si no existe ya ese id.
-    Usado tanto por cargues de recursos (OVI/OVA/Retos) como por
-    tests evaluativos (combinados o exclusivos)."""
-    if not ruta_reporte or not os.path.isfile(ruta_reporte):
-        return False
-
-    with HISTORIAL_LOCK:
-        registros = _cargar_historial()
-
-        if any(r.get("id") == registro_id for r in registros):
-            return False
-
-        registro = {
-            "id": registro_id,
-            "fecha_iso": _ahora_colombia_iso(),
-            "archivo_reporte": os.path.basename(ruta_reporte),
-            "cursos": cursos or [],
-            "estado_final": estado_final,
-            "usuario_app": usuario_app,
-        }
-        if tipo:
-            registro["tipo"] = tipo
-        registros.append(registro)
-        _guardar_historial(registros)
-        return True
-
-
-def _registrar_reporte_final(trabajo):
-    escrito = _agregar_registro_historial(
-        trabajo.get("id"),
-        trabajo.get("ruta_reporte"),
-        trabajo.get("cursos", []),
-        trabajo.get("etapa", "finalizado"),
-        trabajo.get("usuario_app"),
-    )
-    if escrito or trabajo.get("historial_registrado"):
-        trabajo["historial_registrado"] = True
 
 
 def ejecutar_cargue_con_historial(
@@ -519,6 +415,289 @@ def _ejecutar_cargue_en_hilo(trabajo_id):
         with COLA_CONDICION:
             CARGUES_ACTIVOS -= 1
             _despachar_cargues_pendientes()
+
+
+# ============================================================
+# CICLO DE VIDA DE UN TRABAJO (lo usan las rutas web)
+# ============================================================
+
+# Etapas en las que un trabajo cuenta como "cargue en curso".
+ETAPAS_ACTIVAS = {
+    "en_cola",
+    "iniciando",
+    "login",
+    "preparando",
+    "procesando",
+    "validando_login",
+    "cargando_test",
+}
+
+
+def create_analyzed_job(
+    contenido_excel,
+    contenido_zip,
+    hojas,
+    zip_info,
+    modo_matriz,
+    google_sheet_url,
+    hoja_objetivo,
+    nombre_matriz,
+    procesar_ovi,
+    procesar_ova,
+    procesar_retos,
+    usuario_app,
+    test_job_id=None,
+    test_info=None,
+):
+    """Registra un trabajo de cargue a partir de un analisis valido.
+
+    Guarda la matriz y el ZIP en uploads/<id>/, crea temp/<id>/, ejecuta la
+    prevalidacion Drive-ZIP (solo con matriz por link) y deja el trabajo en
+    TRABAJOS con etapa "analizado".
+
+    Args:
+        contenido_excel: bytes de la matriz ya normalizada a XLSX.
+        contenido_zip: bytes del ZIP de recursos.
+        hojas: hojas validas devueltas por analizar_excel.
+        zip_info: resumen devuelto por analizar_zip.
+        modo_matriz: "link" (Google Sheets) o "archivo".
+        google_sheet_url: enlace de la matriz (solo modo link).
+        hoja_objetivo: pestana del enlace (#gid) o None.
+        nombre_matriz: nombre visible de la matriz.
+        procesar_ovi, procesar_ova, procesar_retos: categorias elegidas.
+        usuario_app: usuario de la aplicacion dueno del trabajo.
+        test_job_id: id del Test Evaluativo combinado, si lo hay.
+        test_info: resumen del Test Evaluativo para la pagina, si lo hay.
+
+    Returns:
+        (trabajo_id, resultado): resultado es lo que muestra la pagina de analisis.
+
+    Raises:
+        ValueError: si la prevalidacion Drive-ZIP encuentra problemas
+            estructurales (con el mensaje para el usuario). Antes se borran
+            las carpetas creadas.
+    """
+    trabajo_id = uuid.uuid4().hex
+    carpeta_trabajo = os.path.join(UPLOADS_DIR, trabajo_id)
+    os.makedirs(carpeta_trabajo, exist_ok=True)
+
+    ruta_excel = os.path.join(carpeta_trabajo, "matriz.xlsx")
+    ruta_zip = os.path.join(carpeta_trabajo, "recursos.zip")
+
+    with open(ruta_excel, "wb") as archivo:
+        archivo.write(contenido_excel)
+
+    with open(ruta_zip, "wb") as archivo:
+        archivo.write(contenido_zip)
+
+    carpeta_temp = os.path.join(TEMP_DIR, trabajo_id)
+    os.makedirs(carpeta_temp, exist_ok=True)
+
+    if modo_matriz == "link":
+        preflight_drive = _prevalidar_recursos_drive_zip_ultrarapido(
+            google_sheet_url,
+            ruta_excel,
+            ruta_zip,
+            procesar_ovi,
+            procesar_ova,
+            procesar_retos,
+            hoja_objetivo,
+        )
+
+        recursos_drive_resueltos = preflight_drive.pop(
+            "_mapa_resueltos",
+            {},
+        )
+
+        if not preflight_drive.get("ok"):
+            errores_drive = preflight_drive.get("errores") or []
+            resumen_errores = " | ".join(errores_drive[:8])
+
+            if len(errores_drive) > 8:
+                resumen_errores += (
+                    " | ... y "
+                    + str(len(errores_drive) - 8)
+                    + " error(es) más."
+                )
+
+            shutil.rmtree(carpeta_trabajo, ignore_errors=True)
+            shutil.rmtree(carpeta_temp, ignore_errors=True)
+
+            raise ValueError(
+                "La validación Google Drive vs ZIP encontró problemas. "
+                + resumen_errores
+            )
+    else:
+        # En modo archivo no se consulta Google. El motor conserva su
+        # resolvedor seguro de recursos del ZIP y nunca elige ambiguos.
+        recursos_drive_resueltos = {}
+        preflight_drive = {
+            "ok": True,
+            "modo": "archivo",
+            "total_actividades": sum(
+                len(hoja.get("actividades") or []) for hoja in hojas
+            ),
+            "validadas_drive": 0,
+            "coincidencias_zip": 0,
+            "errores": [],
+            "advertencias": [],
+            "recursos": [],
+        }
+
+    cursos_trabajo = _cursos_desde_hojas(hojas)
+    ruta_reporte = os.path.join(
+        RESULTADOS_DIR,
+        _nombre_reporte(cursos_trabajo, trabajo_id),
+    )
+
+    TRABAJOS[trabajo_id] = {
+        "id": trabajo_id,
+        "ruta_excel": ruta_excel,
+        "ruta_zip": ruta_zip,
+        "carpeta_temp": carpeta_temp,
+        "ruta_reporte": ruta_reporte,
+        "procesar_ovi": procesar_ovi,
+        "procesar_ova": procesar_ova,
+        "procesar_retos": procesar_retos,
+        "etapa": "analizado",
+        "mensaje": "Archivos analizados correctamente.",
+        "total": 0,
+        "procesadas": 0,
+        "exitosas": 0,
+        "errores": 0,
+        "terminado": False,
+        "detalle_actividades": [],
+        "recursos_drive_resueltos": recursos_drive_resueltos,
+        "hoja_objetivo": hoja_objetivo,
+        "origen_matriz": modo_matriz,
+        "nombre_matriz": nombre_matriz,
+        "usuario_app": usuario_app,
+        "cursos": cursos_trabajo,
+        "historial_registrado": False,
+        "creado_en": _ahora_colombia_iso(),
+        "cancelar_solicitado": False,
+    }
+
+    resultado = {
+        "hojas": hojas,
+        "zip": zip_info,
+        "drive": preflight_drive,
+        "origen_matriz": modo_matriz,
+        "nombre_matriz": nombre_matriz,
+    }
+
+    if test_info is not None:
+        resultado["test_info"] = test_info
+        TRABAJOS[trabajo_id]["test_job_id"] = test_job_id
+
+    TRABAJOS[trabajo_id]["resultado_analisis"] = resultado
+
+    return trabajo_id, resultado
+
+
+def validate_access_and_enqueue(trabajo_id, usuario_prizma, contrasena_prizma):
+    """Valida las credenciales de PRIZMA y, si son correctas, encola el trabajo.
+
+    Returns:
+        (True, "") si el trabajo quedo en cola, o (False, mensaje) si PRIZMA
+        rechazo el acceso o no respondio; en ese caso el trabajo vuelve a la
+        etapa "analizado" para poder reintentar.
+    """
+    trabajo = TRABAJOS[trabajo_id]
+    trabajo["etapa"] = "validando_login"
+    trabajo["mensaje"] = "Validando usuario y contraseña en PRIZMA..."
+    validacion = validar_credenciales_prizma(usuario_prizma, contrasena_prizma)
+
+    if not validacion.get("ok"):
+        trabajo["etapa"] = "analizado"
+        trabajo["mensaje"] = validacion.get("mensaje", "No fue posible validar el acceso a PRIZMA.")
+        return False, trabajo["mensaje"]
+
+    _encolar_trabajo(trabajo_id, usuario_prizma, contrasena_prizma)
+    return True, ""
+
+
+def active_jobs():
+    """Cargues en curso de todos los usuarios, del mas antiguo al mas reciente."""
+    activos = [
+        trabajo for trabajo in TRABAJOS.values()
+        if not trabajo.get("terminado")
+        and trabajo.get("etapa") in ETAPAS_ACTIVAS
+    ]
+    activos.sort(key=lambda item: item.get("encolado_en") or item.get("iniciado_en") or item.get("creado_en", ""))
+    return activos
+
+
+def cancel_job(trabajo_id, usuario):
+    """Pide cancelar un trabajo del usuario.
+
+    Returns:
+        "no_encontrado": no existe o pertenece a otra persona.
+        "terminado": ya habia terminado; no se hace nada.
+        "cancelado": estaba en cola y se cancelo sin llegar a iniciar.
+        "solicitado": esta en ejecucion; se detendra de forma segura al
+            terminar la actividad actual.
+    """
+    with COLA_CONDICION:
+        trabajo = TRABAJOS.get(trabajo_id)
+        if not trabajo or not _es_de(trabajo, usuario):
+            return "no_encontrado"
+
+        if trabajo.get("terminado"):
+            return "terminado"
+
+        trabajo["cancelar_solicitado"] = True
+
+        if trabajo.get("etapa") == "en_cola":
+            try:
+                COLA_CARGUES.remove(trabajo_id)
+            except ValueError:
+                pass
+            trabajo.pop("usuario_prizma_temporal", None)
+            trabajo.pop("contrasena_prizma_temporal", None)
+            trabajo["etapa"] = "cancelado"
+            trabajo["mensaje"] = "Proceso cancelado antes de iniciar."
+            trabajo["terminado"] = True
+            trabajo["finalizado_en"] = _ahora_colombia_iso()
+            resultado = "cancelado"
+        else:
+            trabajo["mensaje"] = (
+                "Cancelación solicitada. El proceso se detendrá de forma segura "
+                "al terminar la actividad actual."
+            )
+            resultado = "solicitado"
+
+        COLA_CONDICION.notify_all()
+
+    return resultado
+
+
+def public_job_status(trabajo_id, usuario):
+    """Estado de un trabajo para la pagina de progreso (JSON de /estado).
+
+    Returns:
+        El diccionario publico (sin credenciales ni rutas internas salvo la
+        disponibilidad del reporte), o None si el trabajo no existe o
+        pertenece a otra persona.
+    """
+    trabajo = TRABAJOS.get(trabajo_id)
+
+    if not trabajo or not _es_de(trabajo, usuario):
+        return None
+
+    return {
+        "etapa": trabajo["etapa"],
+        "mensaje": trabajo["mensaje"],
+        "total": trabajo["total"],
+        "procesadas": trabajo["procesadas"],
+        "exitosas": trabajo["exitosas"],
+        "errores": trabajo["errores"],
+        "terminado": trabajo["terminado"],
+        "detalle_actividades": trabajo.get("detalle_actividades", []),
+        "reporte_disponible": os.path.isfile(trabajo["ruta_reporte"]),
+        "posicion_cola": _posicion_en_cola(trabajo_id),
+        "cancelar_solicitado": bool(trabajo.get("cancelar_solicitado")),
+    }
 
 
 print(

@@ -33,7 +33,7 @@ core/config.py     = toda la configuración; core/application.py = instancia Fas
 
 ### Estado de la reorganización (2026-10-06)
 
-Se está reorganizando por fases. Hechas: **Fase 1–2** (auditoría y propuesta), **Fase 3** (estructura y nombres en inglés) y **Fase 4** (configuración centralizada) — commit `9b2c1e5`, sin cambios de comportamiento (mismas rutas, mismo HTML byte a byte). **Red de seguridad para la fase 7**: pruebas de caracterización del motor y de `drive_resource_policy` — commit `1e43574`. **Correcciones del motor** (campo Html vs H5P, diagnóstico de guardado, reintentos de sesión inicial, `import sys`) — commit `0e9ae40`. Pendientes: **5** servicios (sacar lógica de las rutas, repositorio JSON único, normalización de nombres única), **6** integraciones, **7** dividir `automation/prizma/engine.py` (~5800 líneas) y eliminar el monkeypatching, **8** rutas (pasar a `APIRouter`, layout HTML común), **9** más tests, **10** `docs/ARCHITECTURE.md`.
+Se está reorganizando por fases. Hechas: **Fase 1–2** (auditoría y propuesta), **Fase 3** (estructura y nombres en inglés) y **Fase 4** (configuración centralizada) — commit `9b2c1e5`, sin cambios de comportamiento (mismas rutas, mismo HTML byte a byte). **Red de seguridad para la fase 7**: pruebas de caracterización del motor y de `drive_resource_policy` — commit `1e43574`. **Correcciones del motor** (campo Html vs H5P, diagnóstico de guardado, reintentos de sesión inicial, `import sys`) — commit `0e9ae40`. **Fase 5** (servicios): lógica de `/analizar`, `/iniciar`, `/cargue-actual`, `/cancelar`, `/estado` y reportes movida a `services/`; historial en `services/history.py`; escritura atómica única (`core/storage.py`); hora en `core/clock.py`; nombres de archivo en `domain/file_names.py`; código muerto eliminado; la contraseña PRIZMA ya no se retiene en el trabajo. Verificado: mismas rutas, mismo HTML y misma salida de `/analizar` que el código original. Pendientes: **6** integraciones, **7** dividir `automation/prizma/engine.py` (~5800 líneas) y eliminar el monkeypatching, **8** rutas (pasar a `APIRouter`, layout HTML común), **9** más tests, **10** `docs/ARCHITECTURE.md`.
 
 ## Estructura del proyecto
 
@@ -43,7 +43,9 @@ auto-prizma-pro/
 ├── auto_prizma/
 │   ├── core/
 │   │   ├── application.py          # app = FastAPI(...)
-│   │   └── config.py               # Carpetas, env vars, sesión, límites Google/Drive, cola, URL PRIZMA, Chromium
+│   │   ├── config.py               # Carpetas, env vars, sesión, límites Google/Drive, cola, URL PRIZMA, Chromium
+│   │   ├── storage.py              # read_json / write_json_atomic / write_text_atomic (escritura atómica)
+│   │   └── clock.py                # _ahora_colombia / _ahora_colombia_iso
 │   ├── api/routes/
 │   │   ├── static_files.py         # Logo, CSS responsive, script de tema
 │   │   ├── auth.py                 # Middleware de sesión, login, salir, cambiar clave
@@ -55,7 +57,9 @@ auto-prizma-pro/
 │   │   ├── auth.py                 # Usuarios (usuarios.json), PBKDF2, cookies HMAC, bloqueo por intentos
 │   │   ├── matrix_analysis.py      # Descarga Sheets→XLSX, CSV→XLSX, análisis de matriz y ZIP
 │   │   ├── drive_zip_validation.py # Prevalidación Drive ↔ ZIP, avisos
-│   │   └── upload_jobs.py          # TRABAJOS, cola/hilos, historial, nombres de reporte, test dentro del cargue
+│   │   ├── upload_jobs.py          # TRABAJOS, cola/hilos, test dentro del cargue y servicios de las rutas
+│   │   │                           # (create_analyzed_job, validate_access_and_enqueue, active_jobs, cancel_job, public_job_status)
+│   │   └── history.py              # historial.json, nombres/rutas de reportes, consulta por usuario, lectura del CSV
 │   ├── integrations/google/
 │   │   ├── oauth.py                # OAuth por usuario, tokens, descarga de Google Docs para tests
 │   │   └── drive.py                # Enlaces de columna G (Sheets API), listado de carpetas (Drive API)
@@ -63,7 +67,8 @@ auto-prizma-pro/
 │   │   ├── engine.py               # Motor de cargue PRIZMA (Playwright) + lectura de matriz + reporte CSV
 │   │   └── engine_overrides.py     # Reemplaza funciones del motor al importarse (ver Decisiones)
 │   ├── domain/
-│   │   └── drive_resource_policy.py# Reglas puras de emparejamiento Drive ↔ ZIP
+│   │   ├── drive_resource_policy.py# Reglas puras de emparejamiento Drive ↔ ZIP
+│   │   └── file_names.py           # file_base_name / exact_name_key (nombres de archivo)
 │   ├── web/views.py                # HTML de la página principal (análisis y cargue)
 │   └── evaluative_tests/           # Módulo de tests evaluativos
 │       ├── models.py, parser.py, validation.py, serializer.py
@@ -90,9 +95,11 @@ auto-prizma-pro/
 |---|---|---|
 | `main.py` | Orden de arranque | **El orden de imports importa**: primero `engine_overrides`, luego rutas, luego `/tests`. Expone `app.state.*` que usa el módulo de tests. |
 | `core/config.py` | Única fuente de configuración | Ver sección Configuración. |
-| `api/routes/*` | HTTP | Todavía contienen lógica y HTML (pendiente fase 8). |
+| `api/routes/*` | HTTP | Delgadas para análisis, cargues y reportes (delegan en `services/`). Aún contienen HTML de páginas (pendiente fase 8). |
 | `services/auth.py` | Sesión y usuarios | `USUARIO_ACTUAL` (contextvar) propaga el usuario a endpoints e hilos. |
-| `services/upload_jobs.py` | Ciclo de vida del cargue | `_encolar_trabajo` → `_despachar_cargues_pendientes` → hilo → `ejecutar_cargue_con_historial` → `engine.ejecutar_cargue`. |
+| `services/upload_jobs.py` | Ciclo de vida del cargue | `create_analyzed_job` → `validate_access_and_enqueue` → `_encolar_trabajo` → `_despachar_cargues_pendientes` → hilo → `ejecutar_cargue_con_historial` → `engine.ejecutar_cargue`. `cancel_job`, `public_job_status` y `active_jobs` para las rutas. |
+| `services/history.py` | Historial y reportes | `_agregar_registro_historial` (sin duplicar id), `_historial_del_usuario` (solo registros propios), `find_user_record`, `saved_report_path` (solo basename dentro de `RESULTADOS_DIR`). |
+| `core/storage.py` | Archivos de datos | Toda escritura de JSON/texto en `data/` debe ser atómica con estas funciones. |
 | `automation/prizma/engine.py` | Todo lo que toca PRIZMA en el cargue | Funciones clave: `leer_actividades_excel`, `determinar_tipo_archivo`, `resolver_recurso`, `validar_credenciales_prizma`, `iniciar_sesion_prizma`, `procesar_actividad`, `ejecutar_cargue`, `guardar_resultado`, `EQUIVALENCIAS_PROGRAMAS`. |
 | `evaluative_tests/` | Funcionalidad completa de tests | Se integra con el cargue vía `upload_jobs._ejecutar_test_en_cargue` y con historial/reportes vía `app.state`. |
 
@@ -100,7 +107,8 @@ auto-prizma-pro/
 
 - Datos como `dict` simples; errores del motor como strings `ERROR_*` que terminan en reportes, historial y UI (no renombrarlos).
 - HTML en raw strings con marcadores `__NOMBRE__` + `.replace`, valores escapados con `html.escape`.
-- Escritura atómica de JSON: `*.tmp` + `os.replace`.
+- Archivos de datos: usar `core/storage.py` (`read_json`, `write_json_atomic`, `write_text_atomic`; escritura atómica `*.tmp` + `os.replace`). `read_json` recibe qué errores cuentan como "ilegible": `usuarios.json` solo trata errores de lectura/JSON (otros se propagan para no sobrescribir un archivo dañado al crear un usuario).
+- Un servicio que falla por una regla de negocio lanza `ValueError` con el mensaje para el usuario y la ruta lo muestra (p. ej. `create_analyzed_job` si la prevalidación Drive↔ZIP falla).
 - Logging con `print()` (no hay módulo `logging`).
 - Concurrencia con `threading.Lock/RLock/Condition`; fechas de usuario en `America/Bogota` (`ZONA_HORARIA_COLOMBIA`).
 - Archivos `.py` del working tree con finales CRLF (`core.autocrlf=true`).
@@ -127,10 +135,11 @@ auto-prizma-pro/
 
 ## Services
 
-`auth`, `matrix_analysis`, `drive_zip_validation`, `upload_jobs`. Reglas:
-- La lógica de negocio nueva va aquí, no en las rutas.
+`auth`, `matrix_analysis`, `drive_zip_validation`, `upload_jobs`, `history`. Reglas:
+- La lógica de negocio nueva va aquí, no en las rutas. Las funciones nuevas que los servicios exponen a las rutas tienen nombre en inglés (`create_analyzed_job`, `cancel_job`, ...).
 - Un servicio no importa módulos de `api/`.
-- Hoy existen dependencias circulares resueltas con imports dentro de funciones (`upload_jobs` ↔ `evaluative_tests.execution`, `api/routes/analysis` → `evaluative_tests`). No añadir más; resolverlas en la fase 5.
+- `upload_jobs` importa `evaluative_tests.state/execution` DENTRO de `_ejecutar_test_en_cargue` a propósito: es enlace tardío y las pruebas parchean `auto_prizma.evaluative_tests.execution.ejecutar_test_job`; no subir ese import a nivel de módulo. `evaluative_tests` ya no importa `upload_jobs` (usa `services/history`), así que no hay ciclo.
+- La creación de jobs de test es única: `evaluative_tests.state.register_test_job` (la usan `/tests/analizar` y `/analizar`).
 
 ## Integrations
 
@@ -216,14 +225,15 @@ URL de desarrollo: `http://127.0.0.1:8000`. `--reload` reinicia el proceso y **p
 - Framework: **pytest** (`requirements-dev.txt`). `tests/conftest.py` fija `AUTO_PRIZMA_DATA_DIR` en una carpeta temporal y crea el usuario `adminlocal`. PRIZMA y Playwright están simulados (`unittest.mock.patch`).
 
 ```powershell
-python -m pytest -q                                   # todo (≈45 s, 156 pruebas al 2026-10-06)
+python -m pytest -q                                   # todo (≈45 s, 189 pruebas al 2026-10-06)
 python -m pytest tests/test_test_parser.py -q         # un archivo
 python -m pytest tests/test_automation.py -k nombre   # una prueba
 ```
 
 - Los `patch("auto_prizma.evaluative_tests....")` usan rutas de módulo en texto: al mover/renombrar módulos hay que actualizarlas.
 - **Pruebas de caracterización** (`test_engine_characterization.py`, `test_drive_resource_policy.py`): fijan el comportamiento ACTUAL (lectura de matriz, tipo de archivo, índice ZIP, `resolver_recurso`, CSV, reglas de Retos, emparejamiento Drive↔ZIP). Si fallan tras un refactor, el refactor cambió comportamiento: no "arreglar" la prueba sin decidirlo explícitamente. Usan las funciones originales del motor guardadas en `engine_overrides` (`_LEER_ACTIVIDADES_EXCEL_ORIGINAL`, `_RESOLVER_RECURSO_ORIGINAL`), porque al importar `main` el motor queda parcheado.
-- Sin cobertura: el motor de cargue real contra PRIZMA, OAuth real, Drive real.
+- Sin cobertura: el motor de cargue real contra PRIZMA, OAuth real, Drive real y la prevalidación Drive↔ZIP en modo link (`_prevalidar_recursos_drive_zip_ultrarapido`, requiere Google).
+- `/analizar` escribe en `uploads/` y `temp/` reales (dependen de `BASE_DIR`, no de `AUTO_PRIZMA_DATA_DIR`): las pruebas que lo llamen deben borrar lo que crean (ver la fixture `limpiar_trabajos` en `tests/test_analysis_flow.py`).
 - Verificación adicional tras refactors: `python -m compileall -q main.py auto_prizma scripts tests` y arrancar uvicorn comprobando `/login` (200) y `/` (303 → `/login`).
 
 ## Seguridad
@@ -284,6 +294,7 @@ git fetch origin; git rev-list --count HEAD..origin/main   # ¿rama atrasada?
    - Reglas puras sin I/O → `domain/`.
    - HTML → `web/` (o `views.py` del módulo).
    - Constantes/env → `core/config.py` (+ `.env.example`).
+   - Persistencia de archivos de datos → `core/storage.py` (no escribir JSON a mano).
    - Funcionalidad grande y autocontenida → paquete propio como `evaluative_tests/`.
 4. Nombres de archivos/funciones nuevas en inglés; comentarios y docstrings en español.
 5. Añadir pruebas en `tests/` (simular PRIZMA/Playwright/Google con `unittest.mock`).
@@ -319,15 +330,17 @@ git fetch origin; git rev-list --count HEAD..origin/main   # ¿rama atrasada?
 - `resultados/` no se usa (los reportes van a `DATA_DIR/reportes/`).
 - `/cargue-actual` muestra cargues activos de **todos** los usuarios (las acciones sí exigen ser el dueño), aunque el README dice "del usuario".
 - Docstring de `_resolver_hoja_objetivo` (`integrations/google/drive.py`) dice que sin `gid` devuelve `None`, pero lanza `ValueError`.
-- Código sin uso: `prevalidar_recursos_drive_zip` del motor; scraping público de Drive del motor (anulado por el override); `BackgroundTasks` en `/iniciar`.
-- Archivos grandes pendientes de dividir: `engine.py` (~5200), `web/views.py` (~1500), `evaluative_tests/automation.py` (~1090), `integrations/google/drive.py` (~920), `evaluative_tests/routes.py` (~910), `services/drive_zip_validation.py` (~880).
-- Duplicaciones pendientes: normalización de nombres de archivo en 3 sitios (`_clave_nombre_drive_zip`, `clave_nombre_archivo_exacto`, `drive_resource_policy._normalized_name`); escritura atómica de JSON repetida; layout HTML (barra lateral/estilos) copiado en varias páginas; lógica de login en PRIZMA repetida.
+- Código sin uso: `prevalidar_recursos_drive_zip` del motor; scraping público de Drive del motor (anulado por el override); `BackgroundTasks` en `/iniciar`; variable `programa_sugerido` en `evaluative_tests/views.py`. (En la fase 5 se eliminaron 5 funciones muertas y el índice "flexible" de `drive_zip_validation.py`.)
+- Archivos grandes pendientes de dividir: `engine.py` (~5800), `web/views.py` (~1500), `evaluative_tests/automation.py` (~1090), `integrations/google/drive.py` (~920), `evaluative_tests/routes.py` (~910), `services/upload_jobs.py` (~700; candidato: separar creación de trabajos y cola), `services/drive_zip_validation.py` (~680).
+- Duplicaciones pendientes: layout HTML (barra lateral/estilos) copiado en varias páginas; lógica de login en PRIZMA repetida (motor, validación y tests evaluativos). Nombres de archivo: el nombre base y la clave exacta ya están unificados en `domain/file_names.py`; quedan dos normalizaciones con semántica DISTINTA a propósito — `engine.clave_nombre_archivo_exacto` (ignora mayúsculas) y `drive_resource_policy._normalized_name` (canónica: guiones, espacios y mayúsculas). Unificarlas cambiaría qué archivos se emparejan: requiere decisión del usuario.
 - `.venv` local creado antes de que `main` añadiera `python-docx`: ejecutar `python -m pip install -r requirements-dev.txt` o la app no arranca.
 
 ## Decisiones arquitectónicas
 
 - **Paquete `auto_prizma/` por capas** (core / api / services / integrations / automation / domain / web) + módulos de funcionalidad autocontenidos (`evaluative_tests/`).
 - **`main:app` como contrato** de arranque (Dockerfile/Railway); `main.py` solo ensambla.
+- **Rutas delgadas y lógica en servicios**: las rutas validan entradas, llaman a `services/` y renderizan; el historial está separado del ciclo de vida de los trabajos (`services/history.py`).
+- **Escritura atómica de archivos de datos** en un único módulo (`core/storage.py`).
 - **Configuración centralizada** en `core/config.py`; los módulos reexportan los mismos nombres para no romper consumidores; las variables que se leían en cada llamada siguen leyéndose en cada llamada.
 - **Overrides del motor al importar** (heredado): el preflight Drive↔ZIP se reutiliza durante el cargue sin volver a consultar Drive. Se planea sustituir por inyección explícita (fase 7).
 - **Identidad Drive↔ZIP solo por nombre canónico**; el tamaño es informativo; las ambigüedades no se adivinan (la fila queda no cargable). Diferencias = advertencias, no bloqueo del análisis completo.

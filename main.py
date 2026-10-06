@@ -25,7 +25,7 @@ import auto_prizma.api.routes.reports  # noqa: F401
 
 from auto_prizma.core.config import RESULTADOS_DIR
 from auto_prizma.integrations.google.oauth import _descargar_google_docx_para_tests
-from auto_prizma.api.routes.reports import _historial_del_usuario
+from auto_prizma.services.history import _historial_del_usuario
 from auto_prizma.services.upload_jobs import TRABAJOS
 
 

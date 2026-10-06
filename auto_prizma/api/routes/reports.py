@@ -7,23 +7,23 @@ from fastapi.responses import (
     FileResponse,
 )
 from auto_prizma.automation.prizma.engine import normalizar_texto
-import csv
 import os
 import html
 from datetime import datetime
 
 from auto_prizma.core.application import app
-from auto_prizma.core.config import RESULTADOS_DIR
+from auto_prizma.core.config import ZONA_HORARIA_COLOMBIA
 from auto_prizma.services.auth import (
     _es_de,
-    _normalizar_usuario,
     _usuario_actual,
 )
-from auto_prizma.services.upload_jobs import (
-    TRABAJOS,
-    ZONA_HORARIA_COLOMBIA,
-    _cargar_historial,
+from auto_prizma.services.history import (
+    _historial_del_usuario,
+    _leer_reporte_csv,
+    find_user_record,
+    saved_report_path,
 )
+from auto_prizma.services.upload_jobs import TRABAJOS
 
 
 # ============================================================
@@ -44,22 +44,6 @@ def _formatear_fecha_hora(fecha_iso):
     hora = fecha.strftime("%I:%M").lstrip("0") or "0:00"
     sufijo = "a. m." if fecha.hour < 12 else "p. m."
     return fecha_texto, f"{hora} {sufijo}"
-
-
-def _historial_del_usuario(usuario=None):
-    """Solo los registros de esa persona.
-
-    Los registros viejos (anteriores al login) no tienen dueno y no se
-    muestran a nadie, para no filtrar reportes de otros.
-    """
-    usuario = usuario or _usuario_actual()
-
-    return [
-        registro for registro in _cargar_historial()
-        if _normalizar_usuario(
-            registro.get("usuario_app")
-        ) == _normalizar_usuario(usuario)
-    ]
 
 
 def _pagina_registros(tipo="historial"):
@@ -208,18 +192,6 @@ def historial_cargues():
 @app.get("/reportes", response_class=HTMLResponse)
 def reportes_generados():
     return _pagina_registros("reportes")
-
-
-def _leer_reporte_csv(ruta):
-    """Devuelve (cabeceras, filas) del CSV del reporte."""
-    with open(ruta, "r", encoding="utf-8-sig", newline="") as archivo:
-        lector = csv.reader(archivo)
-        filas = [fila for fila in lector if any(str(c).strip() for c in fila)]
-
-    if not filas:
-        return [], []
-
-    return filas[0], filas[1:]
 
 
 def _clase_resultado(valor):
@@ -406,21 +378,14 @@ tbody tr:hover{{background:#fafaff}}
 
 @app.get("/reporte-guardado/{registro_id}")
 def descargar_reporte_guardado(registro_id: str, descargar: int = 0):
-    registro = next(
-        (
-            r for r in _historial_del_usuario()
-            if r.get("id") == registro_id
-        ),
-        None,
-    )
+    registro = find_user_record(registro_id)
 
     if not registro:
         return JSONResponse({"error": "Reporte no encontrado"}, status_code=404)
 
-    nombre = os.path.basename(str(registro.get("archivo_reporte") or ""))
-    ruta = os.path.join(RESULTADOS_DIR, nombre)
+    nombre, ruta = saved_report_path(registro)
 
-    if not nombre or not os.path.isfile(ruta):
+    if ruta is None:
         return JSONResponse({"error": "El archivo del reporte ya no está disponible"}, status_code=404)
 
     if descargar:

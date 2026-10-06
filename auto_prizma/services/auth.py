@@ -15,6 +15,7 @@ from datetime import (
     timedelta,
 )
 
+from auto_prizma.core.storage import read_json, write_json_atomic
 from auto_prizma.core.config import (
     BLOQUEO_SEGUNDOS,
     MAX_INTENTOS,
@@ -115,24 +116,13 @@ def _slug_usuario(usuario):
 
 
 def _cargar_usuarios():
-    if not os.path.isfile(USUARIOS_PATH):
-        return {}
-
-    try:
-        with open(USUARIOS_PATH, "r", encoding="utf-8") as archivo:
-            datos = json.load(archivo)
-        return datos if isinstance(datos, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
+    # Solo errores de lectura/JSON cuentan como "sin usuarios": otros errores
+    # se propagan para no sobrescribir un usuarios.json danado al guardar.
+    return read_json(USUARIOS_PATH, {}, dict, errors=(OSError, json.JSONDecodeError))
 
 
 def _guardar_usuarios(usuarios):
-    temporal = USUARIOS_PATH + ".tmp"
-
-    with open(temporal, "w", encoding="utf-8") as archivo:
-        json.dump(usuarios, archivo, ensure_ascii=False, indent=2)
-
-    os.replace(temporal, USUARIOS_PATH)
+    write_json_atomic(USUARIOS_PATH, usuarios)
 
 
 def _hash_contrasena(contrasena, sal=None):

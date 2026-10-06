@@ -6,6 +6,8 @@ import re
 import unicodedata
 from typing import Any, Iterable
 
+from auto_prizma.domain.file_names import file_base_name
+
 
 @dataclass(frozen=True)
 class WarningItem:
@@ -32,13 +34,8 @@ class DriveChoiceResult:
     error: str | None = None
 
 
-def _base_name(value: Any) -> str:
-    text = str(value or "").replace("\\", "/")
-    return text.rsplit("/", 1)[-1].strip()
-
-
 def _normalized_name(value: Any) -> str:
-    text = unicodedata.normalize("NFC", _base_name(value))
+    text = unicodedata.normalize("NFC", file_base_name(value))
     text = text.replace("–", "-").replace("—", "-")
     text = re.sub(r"\s+", " ", text).strip()
     return text.casefold()
@@ -51,7 +48,7 @@ def _normalized_resource_name(value: Any, expected_extension: str = "") -> str:
     ``.h5p`` en el nombre visible. Si la matriz ya declara el tipo esperado,
     completar esa extension NO cambia la identidad del recurso.
     """
-    name = _base_name(value)
+    name = file_base_name(value)
     expected = str(expected_extension or "").lower().strip()
     current = os.path.splitext(name)[1].lower()
 
@@ -65,7 +62,7 @@ def _normalized_resource_name(value: Any, expected_extension: str = "") -> str:
 
 
 def _extension(value: Any) -> str:
-    return os.path.splitext(_base_name(value))[1].lower()
+    return os.path.splitext(file_base_name(value))[1].lower()
 
 
 def _size(value: Any) -> int | None:
@@ -151,7 +148,7 @@ def match_drive_resource_to_zip(
     del fallback_entry  # compatibilidad: intencionalmente no se usa
 
     entries = _filter_expected_extension(zip_entries, expected_extension)
-    drive_name = _base_name(drive_item.get("nombre"))
+    drive_name = file_base_name(drive_item.get("nombre"))
     drive_name_key = _normalized_resource_name(drive_name, expected_extension)
 
     same_name = [
@@ -192,7 +189,7 @@ def detect_duplicate_assignments(
             f'{item.get("hoja", "")} fila {int(item.get("fila") or 0)}'
             for item in ordered
         )
-        name = _base_name(ordered[0].get("archivo_drive"))
+        name = file_base_name(ordered[0].get("archivo_drive"))
         warnings.append(
             WarningItem(
                 "CROSS_ACTIVITY_DUPLICATE",

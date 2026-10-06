@@ -2,6 +2,7 @@
 """
 
 from auto_prizma.automation.prizma import engine as motor_prizma_modulo
+from auto_prizma.domain.file_names import exact_name_key, file_base_name
 from auto_prizma.domain.drive_resource_policy import (
     choose_drive_item,
     match_drive_resource_to_zip,
@@ -10,7 +11,6 @@ from auto_prizma.domain.drive_resource_policy import (
 import zipfile
 import os
 import re
-import unicodedata
 import time
 
 from auto_prizma.integrations.google.drive import (
@@ -27,48 +27,6 @@ from auto_prizma.integrations.google.drive import (
     _leer_enlaces_columna_g_google_sheet,
     _precargar_referencias_drive_batch,
 )
-
-
-_EQUIVALENCIAS_UNICODE = {
-    0x2010: "-",
-    0x2011: "-",
-    0x2012: "-",
-    0x2013: "-",
-    0x2014: "-",
-    0x2015: "-",
-    0x2212: "-",
-    0x2018: "'",
-    0x2019: "'",
-    0x201C: '"',
-    0x201D: '"',
-    0x00A0: " ",
-    0x2007: " ",
-    0x202F: " ",
-}
-
-
-def _nombre_base_archivo(nombre):
-    """Ultimo componente del nombre, sin importar si separa con / o con \\."""
-    texto = str(nombre or "").replace("\\", "/")
-    return texto.rsplit("/", 1)[-1].strip()
-
-
-def _clave_nombre_drive_zip(nombre):
-    """Nombre exacto de archivo, normalizando solo Unicode NFC."""
-    return unicodedata.normalize("NFC", _nombre_base_archivo(nombre))
-
-
-def _clave_nombre_flexible(nombre):
-    """Mismo nombre escrito de forma equivalente.
-
-    Tolera mayusculas/minusculas, guiones tipograficos, comillas curvas,
-    espacios duros y espacios repetidos. NO es busqueda difusa: sigue
-    exigiendo el mismo nombre, no un nombre parecido.
-    """
-    texto = unicodedata.normalize("NFC", _nombre_base_archivo(nombre))
-    texto = texto.translate(_EQUIVALENCIAS_UNICODE)
-    texto = re.sub(r"\s+", " ", texto).strip()
-    return texto.casefold()
 
 
 _MIME_H5P_DRIVE = {
@@ -105,10 +63,9 @@ def _extension_recurso_drive(item, actividad):
 
 
 def _indice_zip_nombre_tamano(ruta_zip):
-    """Indexa el ZIP por nombre exacto y por nombre equivalente."""
+    """Indexa el ZIP por nombre exacto (Unicode NFC)."""
     indice = {
         "exacto": {},
-        "flexible": {},
         "total": 0,
     }
 
@@ -117,7 +74,7 @@ def _indice_zip_nombre_tamano(ruta_zip):
             if info.is_dir():
                 continue
 
-            nombre = _nombre_base_archivo(info.filename)
+            nombre = file_base_name(info.filename)
             extension = os.path.splitext(nombre)[1].lower()
 
             if extension not in (".h5p", ".pdf"):
@@ -130,139 +87,13 @@ def _indice_zip_nombre_tamano(ruta_zip):
             }
 
             indice["exacto"].setdefault(
-                _clave_nombre_drive_zip(nombre),
-                [],
-            ).append(entrada)
-
-            indice["flexible"].setdefault(
-                _clave_nombre_flexible(nombre),
+                exact_name_key(nombre),
                 [],
             ).append(entrada)
 
             indice["total"] += 1
 
     return indice
-
-
-def _buscar_en_zip(indice_zip, nombre_drive, tamano_drive, extension_esperada=""):
-    """Empareja UN archivo de Drive contra el ZIP sin exigir bytes identicos.
-
-    La identidad primaria es el nombre unico del recurso. El tamano se usa
-    solamente como desempate cuando el ZIP contiene mas de una copia con el
-    mismo nombre. Esto evita falsos negativos cuando Drive contiene otra
-    revision/binario del mismo H5P, sin permitir elecciones ambiguas.
-
-    Si Drive omite la extension pero el MIME + la matriz confirman el tipo,
-    se prueba tambien el nombre con ``extension_esperada``.
-    """
-    nombre_drive = _nombre_base_archivo(nombre_drive)
-    extension_esperada = str(extension_esperada or "").strip().lower()
-
-    nombres_busqueda = [nombre_drive]
-    extension_actual = os.path.splitext(nombre_drive)[1].lower()
-
-    if extension_esperada in (".h5p", ".pdf") and extension_actual != extension_esperada:
-        if not extension_actual:
-            nombres_busqueda.append(nombre_drive + extension_esperada)
-        elif extension_actual == ".zip" and extension_esperada == ".h5p":
-            nombres_busqueda.append(os.path.splitext(nombre_drive)[0] + ".h5p")
-
-    candidatos = []
-    for nombre in dict.fromkeys(nombres_busqueda):
-        encontrados = list(
-            indice_zip["exacto"].get(_clave_nombre_drive_zip(nombre), [])
-        )
-        if not encontrados:
-            encontrados = list(
-                indice_zip["flexible"].get(_clave_nombre_flexible(nombre), [])
-            )
-        if encontrados:
-            candidatos = encontrados
-            break
-
-    if not candidatos:
-        return "sin_nombre", []
-
-    # Un nombre unico es suficiente: el tamano de Drive no define identidad.
-    if len(candidatos) == 1:
-        return "ok", candidatos
-
-    try:
-        tamano_drive = int(tamano_drive)
-    except (TypeError, ValueError):
-        return "duplicado", candidatos
-
-    iguales = [
-        entrada for entrada in candidatos
-        if int(entrada.get("tamano") or -1) == tamano_drive
-    ]
-
-    if len(iguales) == 1:
-        return "ok", iguales
-
-    if len(iguales) > 1:
-        miembros = {str(entrada.get("miembro") or "") for entrada in iguales}
-        if len(miembros) == 1:
-            return "ok", iguales[:1]
-        return "duplicado", iguales
-
-    return "duplicado", candidatos
-
-
-def _desempatar_por_tipo_declarado(actividad, coincidencias):
-    """Si la matriz declara H5P o PDF y solo un candidato tiene esa extension,
-    se toma ese. No se usa el nombre de la actividad: solo el tipo declarado.
-    """
-    tipo = str(actividad.get("tipo_archivo") or "").strip().upper()
-    extension = {"H5P": ".h5p", "PDF": ".pdf"}.get(tipo)
-
-    if not extension:
-        return coincidencias
-
-    filtradas = [
-        par for par in coincidencias
-        if os.path.splitext(str(par[1].get("nombre") or ""))[1].lower() == extension
-    ]
-
-    return filtradas if len(filtradas) == 1 else coincidencias
-
-
-def _explicar_fallas_drive_zip(fallas):
-    """Convierte los fallos por archivo en un mensaje que dice la causa real."""
-    if not fallas:
-        return "la carpeta de Drive no tiene archivos .h5p o .pdf comparables con el ZIP."
-
-    distintos = [f for f in fallas if f[1] == "tamano_distinto"]
-    duplicados = [f for f in fallas if f[1] == "duplicado"]
-    faltantes = [f for f in fallas if f[1] == "sin_nombre"]
-
-    partes = []
-
-    for item, _, entradas in distintos[:3]:
-        tamanos = ", ".join(
-            str(int(entrada.get("tamano") or 0)) for entrada in entradas[:3]
-        )
-        partes.append(
-            '"' + str(item.get("nombre") or "") + '" esta en Drive con '
-            + str(int(item.get("tamano") or 0)) + " bytes y en el ZIP con "
-            + tamanos + " bytes"
-        )
-
-    for item, _, _ in duplicados[:2]:
-        partes.append(
-            '"' + str(item.get("nombre") or "")
-            + '" aparece duplicado en el ZIP con el mismo tamano'
-        )
-
-    if faltantes:
-        nombres = ", ".join(
-            '"' + str(item.get("nombre") or "") + '"'
-            for item, _, _ in faltantes[:3]
-        )
-        extra = "" if len(faltantes) <= 3 else " y " + str(len(faltantes) - 3) + " mas"
-        partes.append("el ZIP no contiene " + nombres + extra)
-
-    return "; ".join(partes) + "."
 
 
 ETIQUETAS_AVISO = {
@@ -325,42 +156,6 @@ def _bytes_legibles(valor):
         return f"{int(valor):,}".replace(",", ".") + " bytes"
     except (TypeError, ValueError):
         return "tamano desconocido"
-
-
-def _motivo_sin_relacion(codigo):
-    """Traduce el codigo de la politica a algo que se entienda."""
-    codigo = str(codigo or "").strip().upper()
-
-    if codigo == "AMBIGUOUS_SAME_NAME":
-        return (
-            "El ZIP tiene varios archivos con ese mismo nombre y tamanos "
-            "distintos, asi que no se puede saber cual es. "
-            "Se dejo el recurso de Drive relacionado con la fila."
-        )
-
-    if codigo == "NO_ZIP_MATCH":
-        return (
-            "El ZIP no contiene ningun archivo con ese nombre ni con ese "
-            "tamano. Revisa si el ZIP corresponde a esta pestana."
-        )
-
-    return (
-        "Se dejo el recurso de Drive relacionado con la fila y el cargue "
-        "seguira el flujo normal del ZIP."
-    )
-
-
-def _entrada_zip_desde_drive(item_drive):
-    """Entrada sintetica para que la fila siga contando como relacionada.
-
-    No apunta a ningun miembro del ZIP: 'miembro' queda vacio y el cargue
-    resuelve ese archivo por el flujo historico.
-    """
-    return {
-        "nombre": str((item_drive or {}).get("nombre") or ""),
-        "tamano": (item_drive or {}).get("tamano"),
-        "miembro": "",
-    }
 
 
 def _registrar_diagnostico_drive(
