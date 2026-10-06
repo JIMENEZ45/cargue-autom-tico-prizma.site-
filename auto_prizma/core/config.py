@@ -206,3 +206,17 @@ URL_PRIZMA = PRIZMA_BASE_URL + "/inicio-sesion"
 CHROMIUM_ARGS = ["--no-sandbox", "--disable-dev-shm-usage"]
 
 VIEWPORT_NAVEGADOR = {"width": 1440, "height": 900}
+
+# Reintentos al abrir la sesion de PRIZMA al INICIO de un cargue: segundos de
+# espera antes de cada reintento (2 esperas = 3 intentos en total). Solo se
+# reintentan fallos momentaneos (timeouts, navegador caido), nunca un login
+# rechazado.
+PRIZMA_ESPERAS_REINTENTO_SESION = (5, 15)
+
+# Politica TEMPORAL del campo "Html" (decision del usuario, 2026-10-06):
+# PRIZMA no permite guardar un H5P si el campo Html de la actividad tiene
+# contenido. Mientras se carguen recursos H5P, True = el motor vacia el Html
+# antes de guardar y deja el contenido previo en el reporte. Cuando se deje de
+# usar H5P y se implemente HTML, poner False: el motor cancelara sin guardar y
+# reportara ERROR_HTML_Y_H5P para revisar a mano.
+PRIZMA_VACIAR_HTML_CON_H5P = True

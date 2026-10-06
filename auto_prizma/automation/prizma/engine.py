@@ -29,6 +29,8 @@ from urllib.error import HTTPError, URLError
 # URL_PRIZMA, CHROMIUM_ARGS y VIEWPORT_NAVEGADOR viven en auto_prizma.core.config.
 from auto_prizma.core.config import (  # noqa: E402
     CHROMIUM_ARGS,
+    PRIZMA_ESPERAS_REINTENTO_SESION,
+    PRIZMA_VACIAR_HTML_CON_H5P,
     URL_PRIZMA,
     VIEWPORT_NAVEGADOR,
 )
@@ -3855,6 +3857,263 @@ def _esperar_archivo_visible(
 # PATCH
 # ============================================================
 
+# PRIZMA no permite guardar un H5P si el campo "Html" de la actividad tiene
+# contenido y lo indica con este texto bajo el campo (no es un alert MUI).
+# Politica TEMPORAL (config.PRIZMA_VACIAR_HTML_CON_H5P): mientras se use H5P
+# el motor vacia el Html antes de guardar; con la politica desactivada cancela
+# la edicion sin guardar y reporta ERROR_HTML_Y_H5P.
+TEXTO_CONFLICTO_HTML_H5P = "Solo puedes subir un H5P o completar el campo Html"
+
+ERROR_CONFLICTO_HTML_H5P = (
+    "ERROR_HTML_Y_H5P: la actividad tiene contenido en el campo Html y PRIZMA "
+    "no permite Html y H5P a la vez. No se guardo nada; vacia el campo Html "
+    "en PRIZMA y vuelve a cargar esta actividad."
+)
+
+ERROR_LIMPIANDO_HTML = (
+    "ERROR_LIMPIANDO_HTML: el campo Html tiene contenido y no se pudo vaciar "
+    "automaticamente. No se guardo nada; vacia el campo Html en PRIZMA y "
+    "vuelve a cargar esta actividad."
+)
+
+# Editor del campo Html: el primer textarea / contenteditable / editor de
+# codigo (CodeMirror, Monaco) que aparece DESPUES del titulo "Html" y ANTES
+# del titulo "Recurso ...". Asi nunca se toca la Descripcion ni otros campos.
+_CLASE_XPATH = "contains(concat(' ', normalize-space(@class), ' '), ' {} ')"
+_XPATH_EDITOR_HTML = (
+    "xpath=//*[normalize-space(text())='Html']/following::*["
+    "self::textarea or @contenteditable='true' or "
+    + _CLASE_XPATH.format("cm-content") + " or "
+    + _CLASE_XPATH.format("monaco-editor") + " or "
+    + _CLASE_XPATH.format("CodeMirror")
+    + "][following::*[starts-with(normalize-space(text()), 'Recurso')]][1]"
+)
+_XPATH_SECCION_HTML = "xpath=//*[normalize-space(text())='Html']/ancestor::*[3]"
+
+
+def _conflicto_html_h5p_visible(pagina):
+    """True si PRIZMA muestra el aviso de que no se pueden tener Html y H5P a la vez."""
+    try:
+        aviso = pagina.get_by_text(TEXTO_CONFLICTO_HTML_H5P, exact=False)
+        for indice in range(min(aviso.count(), 5)):
+            if aviso.nth(indice).is_visible():
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _localizar_editor_html(pagina):
+    """Editor del campo Html de la actividad abierta, o None si no se encuentra."""
+    try:
+        editor = pagina.locator(_XPATH_EDITOR_HTML)
+        if editor.count() == 0:
+            return None
+        return editor.first
+    except Exception:
+        return None
+
+
+def _es_campo_de_texto(editor):
+    try:
+        etiqueta = editor.evaluate("e => e.tagName.toLowerCase()")
+    except Exception:
+        return False
+    return etiqueta in ("textarea", "input")
+
+
+def _texto_editor_html(editor):
+    """Contenido actual del editor Html ("" si no se puede leer)."""
+    if editor is None:
+        return ""
+    try:
+        if _es_campo_de_texto(editor):
+            return editor.input_value(timeout=1000) or ""
+        return editor.inner_text(timeout=1000) or ""
+    except Exception:
+        return ""
+
+
+def _vaciar_editor_html(pagina, editor, aviso_inicial, timeout_ms=3000, intervalo_ms=200):
+    """Vacia el editor Html y verifica el resultado.
+
+    Exito: el aviso de conflicto Html/H5P no esta visible y ademas el editor
+    quedo vacio o el aviso estaba visible antes (y desaparecio). La segunda
+    condicion cubre editores de codigo cuyo texto incluye numeros de linea.
+    """
+    try:
+        if _es_campo_de_texto(editor):
+            editor.fill("")
+        else:
+            editor.click(timeout=5000)
+            pagina.keyboard.press("Control+A")
+            pagina.keyboard.press("Backspace")
+    except Exception as error:
+        print("No se pudo vaciar el campo Html:", type(error).__name__, str(error)[:200])
+        return False
+
+    transcurrido = 0
+    while True:
+        vacio = not normalizar_texto(_texto_editor_html(editor))
+        sin_aviso = not _conflicto_html_h5p_visible(pagina)
+        if sin_aviso and (vacio or aviso_inicial):
+            return True
+        if transcurrido >= timeout_ms:
+            return False
+        pagina.wait_for_timeout(intervalo_ms)
+        transcurrido += intervalo_ms
+
+
+def _guardar_estructura_campo_html(pagina, carpeta_temp, actividad):
+    """Guarda el HTML de la seccion "Html" del formulario para ajustar el motor.
+
+    Solo se usa cuando no se pudo vaciar el campo. Queda en temp/ (no se versiona).
+    """
+    try:
+        if not carpeta_temp:
+            return ""
+        seccion = pagina.locator(_XPATH_SECCION_HTML)
+        if seccion.count() == 0:
+            return ""
+        contenido = seccion.first.evaluate("e => e.outerHTML") or ""
+        os.makedirs(carpeta_temp, exist_ok=True)
+        fila = str((actividad or {}).get("fila_excel") or "x")
+        ruta = os.path.join(carpeta_temp, "campo_html_fila_" + fila + ".html")
+        with open(ruta, "w", encoding="utf-8") as archivo:
+            archivo.write(contenido[:200000])
+        try:
+            return os.path.relpath(ruta)
+        except ValueError:
+            return ruta
+    except Exception:
+        return ""
+
+
+def _resolver_campo_html(pagina, carpeta_temp, actividad, nombre_recurso):
+    """Deja el campo Html listo para guardar un H5P, segun la politica vigente.
+
+    Devuelve (resultado_error, texto_vaciado):
+      - (None, None): no habia contenido ni aviso; no se toco nada.
+      - (None, "texto previo"): se vacio el Html (el texto previo va al reporte).
+      - (dict, None): no se puede guardar; la edicion ya quedo cancelada.
+    """
+    aviso = _conflicto_html_h5p_visible(pagina)
+    editor = _localizar_editor_html(pagina)
+    texto_previo = _texto_editor_html(editor).strip()
+
+    if not aviso and not normalizar_texto(texto_previo):
+        return None, None
+
+    if not PRIZMA_VACIAR_HTML_CON_H5P:
+        if not aviso:
+            # Sin aviso de PRIZMA y sin permiso para borrar: se intenta guardar
+            # igual; si PRIZMA lo bloquea, se reportara el conflicto.
+            return None, None
+        print("Conflicto Html/H5P detectado: no se guarda esta actividad.")
+        cancelar_edicion_segura(pagina)
+        return {
+            "ok": False,
+            "error": ERROR_CONFLICTO_HTML_H5P,
+            "recurso": nombre_recurso,
+        }, None
+
+    print("Campo Html con contenido; se vacia para poder guardar el H5P:", texto_previo[:120])
+
+    if editor is not None and _vaciar_editor_html(pagina, editor, aviso):
+        print("Campo Html vaciado.")
+        return None, texto_previo
+
+    error = ERROR_LIMPIANDO_HTML
+    ruta_estructura = _guardar_estructura_campo_html(pagina, carpeta_temp, actividad)
+    if ruta_estructura:
+        error += "; estructura: " + ruta_estructura
+    ruta_captura = _guardar_captura_diagnostico(pagina, carpeta_temp, actividad)
+    if ruta_captura:
+        error += "; captura: " + ruta_captura
+    print(error)
+
+    cancelar_edicion_segura(pagina)
+    return {
+        "ok": False,
+        "error": error,
+        "recurso": nombre_recurso,
+    }, None
+
+
+def _intentar_guardado(pagina, boton_guardar, respuestas, captura):
+    """Pulsa Guardar y espera el PATCH de la actividad.
+
+    Devuelve (respuesta_patch, detalle_clic, error_clic):
+      - respuesta_patch: dict metodo/status/url, o None si no llego.
+      - detalle_clic: motivo si el clic no se pudo completar ("" si se hizo).
+      - error_clic: excepcion inesperada al pulsar, o None.
+    """
+    respuestas.clear()
+    captura["fallidas"] = []
+
+    captura[
+        "activa"
+    ] = True
+
+    print(
+        "💾 Guardando..."
+    )
+
+    # La confirmacion principal queda enlazada al mismo clic que guarda.
+    # Esto evita depender exclusivamente del listener global y elimina una
+    # posible condicion de carrera entre el clic y el registro de respuestas.
+    respuesta_patch = None
+    error_clic_guardar = None
+    # Si el TimeoutError viene del clic (boton tapado/deshabilitado) y no de
+    # la espera del PATCH, aqui queda el motivo para el diagnostico.
+    detalle_clic = ""
+
+    try:
+        with pagina.expect_response(
+            _es_patch_actividad_response,
+            timeout=45000,
+        ) as respuesta_info:
+            boton_guardar.click(
+                timeout=10000
+            )
+
+        respuesta_obj = respuesta_info.value
+        respuesta_patch = {
+            "metodo": respuesta_obj.request.method.upper(),
+            "status": respuesta_obj.status,
+            "url": respuesta_obj.url,
+        }
+        print(
+            "✅ PATCH capturado directamente:",
+            respuesta_patch["status"],
+        )
+
+    except PlaywrightTimeoutError as error_espera:
+        detalle_clic = _resumir_error_clic(error_espera)
+        print(
+            "⚠️ No se capturó el PATCH con expect_response; "
+            "revisando el listener global..."
+        )
+        if detalle_clic:
+            print("Clic en Guardar no completado:", detalle_clic)
+
+        # El listener global se conserva como respaldo y diagnostico.
+        respuesta_patch = esperar_patch(
+            pagina,
+            respuestas,
+            timeout_ms=2000,
+        )
+
+    except Exception as error_guardado:
+        error_clic_guardar = error_guardado
+
+    captura[
+        "activa"
+    ] = False
+
+    return respuesta_patch, detalle_clic, error_clic_guardar
+
+
 def _es_patch_actividad_response(response):
     """Identifica exclusivamente la respuesta PATCH que actualiza una actividad."""
     try:
@@ -4602,6 +4861,24 @@ def procesar_actividad(
         "✅ Recurso visible."
     )
 
+    # 9b. CAMPO HTML / H5P: PRIZMA no permite guardar un H5P si el campo
+    # Html tiene contenido. Politica temporal (PRIZMA_VACIAR_HTML_CON_H5P):
+    # se vacia el Html antes de guardar y el contenido previo va al reporte.
+    html_vaciado = None
+
+    if (
+        str(actividad.get("tipo_archivo") or "").upper() == "H5P"
+        or _conflicto_html_h5p_visible(pagina)
+    ):
+        error_html, html_vaciado = _resolver_campo_html(
+            pagina,
+            carpeta_temp,
+            actividad,
+            nombre_recurso,
+        )
+        if error_html:
+            return error_html
+
     # 10. GUARDAR
 
     boton_guardar = encontrar_boton_guardar(
@@ -4622,61 +4899,69 @@ def procesar_actividad(
                 nombre_recurso,
         }
 
-    respuestas.clear()
-
-    captura[
-        "activa"
-    ] = True
-
-    print(
-        "💾 Guardando..."
+    respuesta_patch, detalle_clic, error_clic_guardar = _intentar_guardado(
+        pagina,
+        boton_guardar,
+        respuestas,
+        captura,
     )
 
-    # La confirmacion principal queda enlazada al mismo clic que guarda.
-    # Esto evita depender exclusivamente del listener global y elimina una
-    # posible condicion de carrera entre el clic y el registro de respuestas.
-    respuesta_patch = None
-    error_clic_guardar = None
-
-    try:
-        with pagina.expect_response(
-            _es_patch_actividad_response,
-            timeout=45000,
-        ) as respuesta_info:
-            boton_guardar.click(
-                timeout=10000
-            )
-
-        respuesta_obj = respuesta_info.value
-        respuesta_patch = {
-            "metodo": respuesta_obj.request.method.upper(),
-            "status": respuesta_obj.status,
-            "url": respuesta_obj.url,
-        }
-        print(
-            "✅ PATCH capturado directamente:",
-            respuesta_patch["status"],
-        )
-
-    except PlaywrightTimeoutError:
-        print(
-            "⚠️ No se capturó el PATCH con expect_response; "
-            "revisando el listener global..."
-        )
-
-        # El listener global se conserva como respaldo y diagnostico.
-        respuesta_patch = esperar_patch(
+    # 10b. PRIZMA puede mostrar el aviso Html/H5P solo al intentar guardar.
+    # Se resuelve el campo Html (o se cancela segun la politica) y se
+    # reintenta el guardado UNA vez.
+    if (
+        error_clic_guardar is None
+        and respuesta_patch is None
+        and _conflicto_html_h5p_visible(pagina)
+    ):
+        error_html, texto_vaciado = _resolver_campo_html(
             pagina,
-            respuestas,
-            timeout_ms=2000,
+            carpeta_temp,
+            actividad,
+            nombre_recurso,
+        )
+        if error_html:
+            return error_html
+
+        if texto_vaciado is not None:
+            html_vaciado = texto_vaciado
+
+        boton_guardar = encontrar_boton_guardar(
+            pagina
         )
 
-    except Exception as error_guardado:
-        error_clic_guardar = error_guardado
+        if boton_guardar is None:
+            cancelar_edicion_segura(
+                pagina
+            )
+            return {
+                "ok": False,
+                "error": "ERROR_BOTON_GUARDAR",
+                "recurso": nombre_recurso,
+            }
 
-    captura[
-        "activa"
-    ] = False
+        print("Reintentando el guardado con el campo Html vacio...")
+
+        respuesta_patch, detalle_clic, error_clic_guardar = _intentar_guardado(
+            pagina,
+            boton_guardar,
+            respuestas,
+            captura,
+        )
+
+        if (
+            error_clic_guardar is None
+            and respuesta_patch is None
+            and _conflicto_html_h5p_visible(pagina)
+        ):
+            cancelar_edicion_segura(
+                pagina
+            )
+            return {
+                "ok": False,
+                "error": ERROR_LIMPIANDO_HTML,
+                "recurso": nombre_recurso,
+            }
 
     if error_clic_guardar is not None:
         cancelar_edicion_segura(
@@ -4701,6 +4986,23 @@ def procesar_actividad(
 
     if respuesta_patch is None:
 
+        # Se toma ANTES de reabrir la actividad: la reapertura navega y
+        # haria desaparecer las alertas y errores del formulario.
+        diagnostico = _diagnostico_guardado_sin_patch(
+            pagina,
+            respuestas,
+            captura,
+            detalle_clic=detalle_clic,
+        )
+        ruta_captura = _guardar_captura_diagnostico(
+            pagina,
+            carpeta_temp,
+            actividad,
+        )
+        if ruta_captura:
+            diagnostico += "; captura: " + ruta_captura
+        print("Diagnostico de guardado sin PATCH:", diagnostico)
+
         if verificar_guardado_por_reapertura(
             pagina,
             actividad,
@@ -4711,13 +5013,14 @@ def procesar_actividad(
                 "ok": True,
                 "error": "",
                 "recurso": nombre_recurso,
+                "html_vaciado": html_vaciado,
                 "confirmacion": "REAPERTURA",
             }
 
         return {
             "ok": False,
             "error":
-                "ERROR_PATCH_NO_CONFIRMADO",
+                "ERROR_PATCH_NO_CONFIRMADO: " + diagnostico,
             "recurso":
                 nombre_recurso,
         }
@@ -4772,14 +5075,28 @@ def procesar_actividad(
         "error": "",
         "recurso":
             nombre_recurso,
+        "html_vaciado": html_vaciado,
         "confirmacion": "PATCH",
     }
 
 
 def _observacion_guardado(resultado):
     if str((resultado or {}).get("confirmacion") or "").upper() == "REAPERTURA":
-        return "Carga guardada - verificada al reabrir la actividad"
-    return "Carga guardada - PATCH confirmado"
+        observacion = "Carga guardada - verificada al reabrir la actividad"
+    else:
+        observacion = "Carga guardada - PATCH confirmado"
+
+    # Politica temporal Html/H5P: deja constancia del contenido eliminado.
+    html_vaciado = (resultado or {}).get("html_vaciado")
+    if html_vaciado is not None:
+        previo = re.sub(r"\s+", " ", str(html_vaciado)).strip()
+        observacion += (
+            " - se vacio el campo Html (contenido previo: \""
+            + (previo[:300] if previo else "no legible")
+            + "\")"
+        )
+
+    return observacion
 
 
 def _registrar_respuesta_prizma(response, respuestas, captura):
@@ -4801,6 +5118,167 @@ def _registrar_respuesta_prizma(response, respuestas, captura):
         print("PRIZMA HTTP ->", metodo, response.status, str(response.url).split("?", 1)[0])
     except Exception:
         pass
+
+
+def _registrar_fallo_prizma(request, captura):
+    """Guarda las peticiones no-GET que fallan sin respuesta mientras se confirma un guardado.
+
+    Se guardan aparte (captura["fallidas"]) para no mezclarlas con las
+    respuestas que revisa esperar_patch.
+    """
+    if not captura.get("activa"):
+        return
+
+    try:
+        metodo = request.method.upper()
+        if metodo == "GET":
+            return
+
+        fallo = request.failure
+        motivo = fallo if isinstance(fallo, str) else str(
+            getattr(fallo, "error_text", "") or fallo or ""
+        )
+        captura.setdefault("fallidas", []).append({
+            "metodo": metodo,
+            "url": request.url,
+            "motivo": motivo,
+        })
+        print("PRIZMA HTTP FALLIDA ->", metodo, str(request.url).split("?", 1)[0], motivo)
+    except Exception:
+        pass
+
+
+# Alertas/toasts de PRIZMA (MUI) y errores de validacion de los campos.
+_SELECTORES_ALERTAS_PRIZMA = '[role="alert"], .MuiFormHelperText-root.Mui-error'
+
+
+def _ruta_sin_dominio(url):
+    """Ruta de una URL sin dominio ni query string (no expone tokens en reportes)."""
+    texto = str(url or "").split("?", 1)[0]
+    coincidencia = re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]+(/.*)?$", texto)
+    if coincidencia:
+        return coincidencia.group(1) or "/"
+    return texto
+
+
+def _textos_alerta_visibles(pagina, limite=3):
+    """Textos visibles de alertas y errores de formulario en la pagina actual."""
+    textos = []
+
+    try:
+        elementos = pagina.locator(_SELECTORES_ALERTAS_PRIZMA)
+        cantidad = min(elementos.count(), 10)
+    except Exception:
+        return textos
+
+    for indice in range(cantidad):
+        try:
+            elemento = elementos.nth(indice)
+            if not elemento.is_visible():
+                continue
+            texto = re.sub(r"\s+", " ", elemento.inner_text(timeout=500) or "").strip()
+        except Exception:
+            continue
+
+        texto = texto[:160]
+        if texto and not any(texto in previo or previo in texto for previo in textos):
+            textos.append(texto)
+
+        if len(textos) >= limite:
+            break
+
+    return textos
+
+
+_SENALES_CLIC_BLOQUEADO = (
+    "intercepts pointer events",
+    "not enabled",
+    "not visible",
+    "not stable",
+    "detached",
+    "outside of the viewport",
+)
+
+
+def _resumir_error_clic(error):
+    """Motivo legible si el TimeoutError vino del clic en Guardar.
+
+    Devuelve "" cuando el timeout fue la espera del PATCH (el clic si se hizo).
+    Playwright incluye en el mensaje un "call log" con la causa, por ejemplo
+    '<div class="MuiBox-root ..."> intercepts pointer events'.
+    """
+    texto = str(error or "")
+    if "click" not in texto.lower():
+        return ""
+
+    for linea in texto.splitlines():
+        limpia = linea.strip(" -\t")
+        if any(senal in limpia for senal in _SENALES_CLIC_BLOQUEADO):
+            return limpia[:200]
+
+    primera = texto.strip().splitlines()[0] if texto.strip() else ""
+    return primera.strip()[:200]
+
+
+def _guardar_captura_diagnostico(pagina, carpeta_temp, actividad):
+    """Guarda una captura de pantalla del fallo en la carpeta temporal del trabajo.
+
+    Devuelve la ruta relativa al proyecto (o "" si no se pudo). La captura
+    queda solo en disco local (temp/ no se versiona).
+    """
+    try:
+        if not carpeta_temp:
+            return ""
+        os.makedirs(carpeta_temp, exist_ok=True)
+        fila = str((actividad or {}).get("fila_excel") or "x")
+        ruta = os.path.join(carpeta_temp, "sin_patch_fila_" + fila + ".png")
+        pagina.screenshot(path=ruta, full_page=True, timeout=5000)
+        try:
+            return os.path.relpath(ruta)
+        except ValueError:
+            return ruta
+    except Exception:
+        return ""
+
+
+def _diagnostico_guardado_sin_patch(pagina, respuestas, captura, detalle_clic=""):
+    """Explica por que no se confirmo el guardado cuando PRIZMA no envio el PATCH.
+
+    Reune lo observable sin modificar nada: si el clic en Guardar no se pudo
+    completar, alertas visibles, respuestas HTTP no-GET y peticiones fallidas
+    registradas durante el guardado.
+    """
+    partes = []
+
+    if detalle_clic:
+        partes.append("el clic en Guardar no se completo (" + detalle_clic + ")")
+
+    alertas = _textos_alerta_visibles(pagina)
+    if alertas:
+        partes.append("PRIZMA mostro: " + " | ".join(alertas))
+
+    http = [
+        str(r.get("metodo")) + " " + str(r.get("status")) + " " + _ruta_sin_dominio(r.get("url"))
+        for r in list(respuestas or [])[:5]
+    ]
+    if http:
+        partes.append("respuestas: " + ", ".join(http))
+
+    fallidas = [
+        str(f.get("metodo")) + " " + _ruta_sin_dominio(f.get("url"))
+        + " (" + str(f.get("motivo") or "sin detalle") + ")"
+        for f in list((captura or {}).get("fallidas") or [])[:3]
+    ]
+    if fallidas:
+        partes.append("peticiones fallidas: " + ", ".join(fallidas))
+
+    if not partes:
+        partes.append(
+            "PRIZMA no envio ninguna peticion de guardado ni mostro alertas "
+            "(posible validacion del formulario o boton Guardar sin efecto)"
+        )
+
+    return "; ".join(partes)
 
 
 # ============================================================
@@ -4863,6 +5341,69 @@ def _es_error_estructural_prizma(error):
 
 def _cancelacion_solicitada(estado):
     return bool(estado.get("cancelar_solicitado"))
+
+
+def _abrir_sesion_inicial(
+    abrir_sesion,
+    estado,
+    esperas=PRIZMA_ESPERAS_REINTENTO_SESION,
+    dormir=time.sleep,
+):
+    """Abre la sesion de PRIZMA al inicio del cargue, reintentando fallos momentaneos.
+
+    Solo reintenta errores estructurales (p. ej. "Page.goto: Timeout 60000ms
+    exceeded" cuando PRIZMA tarda en responder) y nunca ERROR_LOGIN_PRIZMA,
+    para no repetir un inicio de sesion rechazado.
+
+    Devuelve la pagina con sesion iniciada, o None si el usuario cancelo
+    durante una espera. Si se agotan los intentos, relanza el ultimo error.
+    """
+    total = len(esperas) + 1
+
+    for intento in range(1, total + 1):
+        motivo = (
+            "inicio del cargue"
+            if intento == 1
+            else "reintento " + str(intento) + " de " + str(total) + " al iniciar"
+        )
+
+        try:
+            return abrir_sesion(motivo)
+        except Exception as error:
+            texto = str(error)
+            reintentable = (
+                _es_error_estructural_prizma(texto)
+                and "ERROR_LOGIN_PRIZMA" not in texto
+            )
+            if not reintentable or intento == total:
+                raise
+
+            espera = int(esperas[intento - 1])
+            print(
+                "PRIZMA no respondio al iniciar sesion (intento",
+                intento,
+                "de",
+                str(total) + "). Reintentando en",
+                espera,
+                "s:",
+                (texto.strip().splitlines() or [""])[0][:200],
+            )
+            actualizar_estado(
+                estado,
+                mensaje=(
+                    "PRIZMA no respondió al iniciar sesión "
+                    f"(intento {intento} de {total}). "
+                    f"Reintentando en {espera} s..."
+                ),
+            )
+
+            # Espera en pasos de 1 s para atender una cancelacion a tiempo.
+            for _ in range(espera):
+                if _cancelacion_solicitada(estado):
+                    return None
+                dormir(1)
+
+    return None
 
 
 def ejecutar_cargue(
@@ -4962,6 +5503,12 @@ def ejecutar_cargue(
                     captura,
                 )
 
+            def registrar_fallo(request):
+                _registrar_fallo_prizma(
+                    request,
+                    captura,
+                )
+
             def abrir_sesion_limpia(motivo=""):
                 nonlocal navegador
                 estado_navegacion["categoria_actual"] = None
@@ -4981,6 +5528,7 @@ def ejecutar_cargue(
                     viewport=dict(VIEWPORT_NAVEGADOR)
                 )
                 nueva_pagina.on("response", registrar_respuesta)
+                nueva_pagina.on("requestfailed", registrar_fallo)
                 iniciar_sesion_prizma(
                     nueva_pagina,
                     usuario_prizma,
@@ -4988,7 +5536,16 @@ def ejecutar_cargue(
                 )
                 return nueva_pagina
 
-            pagina = abrir_sesion_limpia("inicio del cargue")
+            pagina = _abrir_sesion_inicial(abrir_sesion_limpia, estado)
+
+            if pagina is None:
+                actualizar_estado(
+                    estado,
+                    etapa="cancelado",
+                    mensaje="Proceso cancelado por el usuario antes de iniciar sesión en PRIZMA.",
+                    terminado=True,
+                )
+                return
 
             actualizar_estado(
                 estado,
@@ -5196,6 +5753,13 @@ def ejecutar_cargue(
             mensaje_error = (
                 "No fue posible iniciar sesión en PRIZMA. "
                 "Verifica el usuario y la contraseña."
+            )
+        elif "Page.goto" in mensaje_error and "Timeout" in mensaje_error:
+            mensaje_error = (
+                "PRIZMA no respondió al abrir la página de inicio de sesión "
+                f"después de {len(PRIZMA_ESPERAS_REINTENTO_SESION) + 1} intentos. "
+                "Puede estar lento o caído; intenta nuevamente en unos minutos. "
+                "(Detalle: " + mensaje_error.strip().splitlines()[0][:200] + ")"
             )
         actualizar_estado(
             estado,
