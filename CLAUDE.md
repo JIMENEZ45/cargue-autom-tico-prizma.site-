@@ -230,7 +230,7 @@ python -m pytest tests/test_automation.py -k nombre   # una prueba
 
 - Nunca escribir contraseñas, tokens ni secretos en el código; configuración sensible solo por variables de entorno.
 - Nunca versionar `data/`, `.env`, `client_secret*.json` (ya en `.gitignore`). No leer ni mostrar `data/secreto_sesion.txt`, `data/tokens/*` ni hashes de `usuarios.json` salvo necesidad explícita.
-- No registrar credenciales PRIZMA en `print()`, reportes, historial ni en la respuesta de `/estado`.
+- No registrar credenciales PRIZMA en `print()`, reportes, historial ni en la respuesta de `/estado`. Solo pueden vivir en `usuario_prizma_temporal`/`contrasena_prizma_temporal` del trabajo hasta que arranca el hilo o se cancela. (Hasta el 2026-10-06 `_encolar_trabajo` las copiaba además en `trabajo["credenciales_prizma"]`, que nadie leía y retenía la contraseña en memoria; eliminado y cubierto por `tests/test_upload_jobs.py`.)
 - Mantener: `state`+PKCE en OAuth, comprobación de usuario en el callback, `hmac.compare_digest`, bloqueo por intentos, comprobación de propietario (`_es_de`) en rutas de trabajos, `os.path.basename` al servir reportes, scopes de Google de solo lectura.
 
 ## Git

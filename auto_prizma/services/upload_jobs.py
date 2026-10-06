@@ -286,9 +286,11 @@ def _posicion_en_cola(trabajo_id):
 def _encolar_trabajo(trabajo_id, usuario_prizma, contrasena_prizma):
     with COLA_CONDICION:
         trabajo = TRABAJOS[trabajo_id]
+        # Las credenciales solo viven en estos dos campos temporales: el hilo
+        # del cargue (o la cancelacion) los elimina. Nunca se guardan en otro
+        # campo del trabajo, que permanece en memoria mientras el servidor vive.
         trabajo["usuario_prizma_temporal"] = usuario_prizma
         trabajo["contrasena_prizma_temporal"] = contrasena_prizma
-        trabajo["credenciales_prizma"] = {"usuario": usuario_prizma, "clave": contrasena_prizma}
         trabajo["etapa"] = "en_cola"
         trabajo["mensaje"] = "Cargue agregado a la cola de procesamiento."
         trabajo["encolado_en"] = _ahora_colombia_iso()
