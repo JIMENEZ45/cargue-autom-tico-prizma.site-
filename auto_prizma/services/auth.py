@@ -1,0 +1,326 @@
+"""Usuarios de la interfaz, contrasenas, bloqueo por intentos fallidos y cookies de sesion.
+"""
+
+import os
+import json
+import re
+import threading
+import hmac
+import base64
+import hashlib
+import secrets
+import contextvars
+from datetime import (
+    datetime,
+    timedelta,
+)
+
+from auto_prizma.core.config import (
+    BLOQUEO_SEGUNDOS,
+    MAX_INTENTOS,
+    PBKDF2_ITERACIONES,
+    SECRETO_PATH,
+    SESION_COOKIE,
+    SESION_HORAS,
+    USUARIOS_PATH,
+    cookie_secure_forced,
+    google_redirect_uri,
+    session_secret_from_env,
+)
+
+
+# ============================================================
+# SESIONES Y USUARIOS
+# ============================================================
+#
+# - Cada persona entra con usuario y contrasena.
+# - La contrasena se guarda como PBKDF2-SHA256 con sal propia.
+# - La sesion viaja en una cookie firmada con HMAC; el servidor no
+#   guarda estado de sesion, asi que reiniciar uvicorn no desloguea.
+# - Cada usuario tiene SU PROPIO token de Google en data/tokens/.
+#
+
+# SESION_COOKIE, SESION_HORAS, PBKDF2_ITERACIONES, MAX_INTENTOS y
+# BLOQUEO_SEGUNDOS viven en auto_prizma.core.config.
+
+USUARIOS_LOCK = threading.Lock()
+INTENTOS_LOCK = threading.Lock()
+INTENTOS_FALLIDOS = {}
+
+# Se propaga a los endpoints sincronos (Starlette copia el contexto
+# al threadpool) y se fija a mano en el hilo de cargue.
+USUARIO_ACTUAL = contextvars.ContextVar("usuario_actual", default=None)
+
+
+def _secreto_sesion():
+    """Clave para firmar cookies. Prioriza la variable de entorno."""
+    desde_entorno = session_secret_from_env()
+
+    if desde_entorno:
+        return desde_entorno.encode("utf-8")
+
+    if os.path.isfile(SECRETO_PATH):
+        try:
+            with open(SECRETO_PATH, "r", encoding="utf-8") as archivo:
+                guardado = archivo.read().strip()
+            if guardado:
+                return guardado.encode("utf-8")
+        except OSError:
+            pass
+
+    generado = secrets.token_urlsafe(48)
+
+    try:
+        with open(SECRETO_PATH, "w", encoding="utf-8") as archivo:
+            archivo.write(generado)
+    except OSError:
+        pass
+
+    return generado.encode("utf-8")
+
+
+SECRETO_SESION = _secreto_sesion()
+
+
+def _cookie_segura():
+    """Marca la cookie como Secure cuando la app corre bajo https."""
+    if cookie_secure_forced():
+        return True
+
+    redirect_uri = google_redirect_uri().lower()
+
+    return redirect_uri.startswith("https://")
+
+
+def _normalizar_usuario(usuario):
+    return str(usuario or "").strip().lower()
+
+
+def _slug_usuario(usuario):
+    """Nombre de archivo seguro para el token de Google de ese usuario."""
+    base = re.sub(
+        r"[^a-z0-9._-]+",
+        "_",
+        _normalizar_usuario(usuario),
+    ).strip("._-")
+
+    if not base:
+        base = "usuario"
+
+    firma = hashlib.sha256(
+        _normalizar_usuario(usuario).encode("utf-8")
+    ).hexdigest()[:10]
+
+    return base[:40] + "-" + firma
+
+
+def _cargar_usuarios():
+    if not os.path.isfile(USUARIOS_PATH):
+        return {}
+
+    try:
+        with open(USUARIOS_PATH, "r", encoding="utf-8") as archivo:
+            datos = json.load(archivo)
+        return datos if isinstance(datos, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _guardar_usuarios(usuarios):
+    temporal = USUARIOS_PATH + ".tmp"
+
+    with open(temporal, "w", encoding="utf-8") as archivo:
+        json.dump(usuarios, archivo, ensure_ascii=False, indent=2)
+
+    os.replace(temporal, USUARIOS_PATH)
+
+
+def _hash_contrasena(contrasena, sal=None):
+    sal = sal or secrets.token_hex(16)
+
+    derivada = hashlib.pbkdf2_hmac(
+        "sha256",
+        str(contrasena or "").encode("utf-8"),
+        bytes.fromhex(sal),
+        PBKDF2_ITERACIONES,
+    )
+
+    return sal, derivada.hex()
+
+
+def _verificar_contrasena(contrasena, sal, esperado):
+    try:
+        _, calculado = _hash_contrasena(contrasena, sal)
+    except (ValueError, TypeError):
+        return False
+
+    return hmac.compare_digest(calculado, str(esperado or ""))
+
+
+def _crear_usuario(usuario, contrasena, nombre=""):
+    """Alta o cambio de contrasena. Lo usa scripts/manage_users.py."""
+    usuario = _normalizar_usuario(usuario)
+
+    if not usuario:
+        raise ValueError("El usuario no puede estar vacio.")
+
+    if len(str(contrasena or "")) < 8:
+        raise ValueError("La contrasena debe tener al menos 8 caracteres.")
+
+    sal, derivada = _hash_contrasena(contrasena)
+
+    with USUARIOS_LOCK:
+        usuarios = _cargar_usuarios()
+        existente = usuarios.get(usuario) or {}
+
+        usuarios[usuario] = {
+            "nombre": str(nombre or existente.get("nombre") or usuario),
+            "sal": sal,
+            "hash": derivada,
+            "activo": True,
+            "creado": existente.get("creado") or datetime.now().isoformat(),
+            "actualizado": datetime.now().isoformat(),
+        }
+
+        _guardar_usuarios(usuarios)
+
+    return usuario
+
+
+def _autenticar(usuario, contrasena):
+    usuario = _normalizar_usuario(usuario)
+    registro = _cargar_usuarios().get(usuario)
+
+    if not registro or not registro.get("activo", True):
+        # Se calcula igual para no revelar por tiempo si el usuario existe.
+        _hash_contrasena(contrasena, secrets.token_hex(16))
+        return None
+
+    if not _verificar_contrasena(
+        contrasena,
+        registro.get("sal"),
+        registro.get("hash"),
+    ):
+        return None
+
+    return usuario
+
+
+def _bloqueado(clave):
+    with INTENTOS_LOCK:
+        datos = INTENTOS_FALLIDOS.get(clave)
+
+        if not datos:
+            return 0
+
+        intentos, hasta = datos
+
+        if intentos < MAX_INTENTOS:
+            return 0
+
+        restante = hasta - datetime.now()
+
+        if restante.total_seconds() <= 0:
+            INTENTOS_FALLIDOS.pop(clave, None)
+            return 0
+
+        return int(restante.total_seconds()) + 1
+
+
+def _registrar_fallo(clave):
+    with INTENTOS_LOCK:
+        intentos, _ = INTENTOS_FALLIDOS.get(clave, (0, datetime.now()))
+        intentos += 1
+        INTENTOS_FALLIDOS[clave] = (
+            intentos,
+            datetime.now() + timedelta(seconds=BLOQUEO_SEGUNDOS),
+        )
+
+
+def _limpiar_fallos(clave):
+    with INTENTOS_LOCK:
+        INTENTOS_FALLIDOS.pop(clave, None)
+
+
+def _firmar_sesion(usuario):
+    expira = int(
+        (datetime.now() + timedelta(hours=SESION_HORAS)).timestamp()
+    )
+
+    cuerpo = (
+        base64.urlsafe_b64encode(
+            _normalizar_usuario(usuario).encode("utf-8")
+        ).decode("ascii").rstrip("=")
+        + "."
+        + str(expira)
+    )
+
+    firma = hmac.new(
+        SECRETO_SESION,
+        cuerpo.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    return cuerpo + "." + firma
+
+
+def _leer_sesion(valor):
+    partes = str(valor or "").split(".")
+
+    if len(partes) != 3:
+        return None
+
+    cuerpo = partes[0] + "." + partes[1]
+
+    firma = hmac.new(
+        SECRETO_SESION,
+        cuerpo.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(firma, partes[2]):
+        return None
+
+    try:
+        if int(partes[1]) < int(datetime.now().timestamp()):
+            return None
+    except ValueError:
+        return None
+
+    try:
+        relleno = "=" * (-len(partes[0]) % 4)
+        usuario = base64.urlsafe_b64decode(
+            partes[0] + relleno
+        ).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+    usuario = _normalizar_usuario(usuario)
+    registro = _cargar_usuarios().get(usuario)
+
+    if not registro or not registro.get("activo", True):
+        return None
+
+    return usuario
+
+
+def _usuario_de_request(request):
+    return _leer_sesion(request.cookies.get(SESION_COOKIE))
+
+
+def _usuario_actual():
+    return USUARIO_ACTUAL.get()
+
+
+def _nombre_visible(usuario):
+    registro = _cargar_usuarios().get(_normalizar_usuario(usuario)) or {}
+    return str(registro.get("nombre") or usuario or "")
+
+
+def _es_de(trabajo, usuario):
+    """True si ese trabajo pertenece al usuario indicado."""
+    if not trabajo:
+        return False
+    return _normalizar_usuario(
+        trabajo.get("usuario_app")
+    ) == _normalizar_usuario(usuario)

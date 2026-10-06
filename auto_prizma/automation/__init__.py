@@ -1,0 +1,1 @@
+"""Automatizaciones con navegador (Playwright)."""

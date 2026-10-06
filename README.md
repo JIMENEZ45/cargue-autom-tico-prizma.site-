@@ -81,40 +81,49 @@ flowchart LR
 ## Estructura del proyecto
 
 ```
-main.py                     Punto de entrada: arma la app (uvicorn main:app)
-auto_prizma/                Código de la aplicación web
-  aplicacion.py             Instancia FastAPI compartida
-  config.py                 Rutas de carpetas de trabajo y de datos
-  sesiones.py               Usuarios, contraseñas, bloqueo por intentos y cookies de sesión
-  google_oauth.py           Conexión OAuth con Google por usuario
-  drive.py                  Lectura de enlaces en Google Sheets y listado de carpetas de Drive
-  drive_zip.py              Relación Drive ↔ ZIP, avisos y prevalidación rápida
-  integracion_motor.py      Ajustes que se aplican sobre motor_prizma al arrancar
-  trabajos.py               Estado de cargues, historial, reportes y cola de ejecución
-  analisis.py               Lectura de la matriz (CSV/Excel/Sheets) y análisis de matriz y ZIP
-  vistas.py                 HTML de la página principal de análisis y cargue
-  rutas/                    Rutas web
-    estaticos.py            Logo, estilos y script de tema
-    sesion.py               Middleware de sesión, login, salir y cambio de contraseña
-    google.py               Conectar / desconectar Google
-    analisis.py             Inicio y análisis previo al cargue
-    cargues.py              Iniciar, seguir, cancelar y estado de cargues
-    reportes.py             Historial, reportes guardados y descargas
-tests_evaluativos/          Módulo de tests evaluativos (cuestionarios en PRIZMA a partir de un .docx)
-  models.py                 Estructuras de datos del documento (tests, secciones, preguntas)
-  parser.py                 Lectura del .docx y conversión a esas estructuras
-  validation.py             Validación del documento (errores y advertencias)
-  serializer.py             Exportación a JSON
-  automation.py             Automatización de PRIZMA con Playwright para crear los tests
-  estado.py                 Estado en memoria de los trabajos y usuario de PRIZMA recordado
-  vistas.py                 HTML del módulo (layout, revisión y tarjeta de estado)
-  ejecucion.py              Ejecución del cargue de tests en segundo plano
-  web.py                    Rutas /tests/...
-motor_prizma.py             Motor de cargue: lectura de la matriz y automatización de PRIZMA
-drive_resource_policy.py    Reglas para decidir qué recurso de Drive corresponde a cada actividad
-gestionar_usuarios.py       Herramienta de consola para administrar usuarios
-scripts/                    Utilidades manuales (prueba de conexión con PRIZMA)
-static/                     Archivos estáticos (logo)
+main.py                       Punto de entrada: arma la app (uvicorn main:app)
+auto_prizma/                  Código de la aplicación
+  core/
+    application.py            Instancia FastAPI compartida
+    config.py                 Configuración central: carpetas, variables de entorno, sesión,
+                              límites de Google/Drive, cola de cargues, URL de PRIZMA y navegador
+  api/routes/                 Rutas web (cada módulo registra sus rutas sobre la app)
+    static_files.py           Logo, estilos y script de tema
+    auth.py                   Middleware de sesión, login, salir y cambio de contraseña
+    google.py                 Conectar / desconectar Google
+    analysis.py               Inicio y análisis previo al cargue
+    uploads.py                Iniciar, seguir, cancelar y estado de cargues
+    reports.py                Historial, reportes guardados y descargas
+  services/                   Lógica de negocio
+    auth.py                   Usuarios, contraseñas, bloqueo por intentos y cookies de sesión
+    matrix_analysis.py        Lectura de la matriz (CSV/Excel/Sheets) y análisis de matriz y ZIP
+    drive_zip_validation.py   Relación Drive ↔ ZIP, avisos y prevalidación rápida
+    upload_jobs.py            Estado de cargues, historial, reportes y cola de ejecución
+  integrations/google/        Integración con Google
+    oauth.py                  Conexión OAuth con Google por usuario
+    drive.py                  Lectura de enlaces en Google Sheets y listado de carpetas de Drive
+  automation/prizma/          Automatización de PRIZMA con Playwright
+    engine.py                 Motor de cargue: lectura de la matriz y automatización de PRIZMA
+    engine_overrides.py       Ajustes que se aplican sobre el motor al arrancar
+  domain/
+    drive_resource_policy.py  Reglas para decidir qué recurso de Drive corresponde a cada actividad
+  web/
+    views.py                  HTML de la página principal de análisis y cargue
+  evaluative_tests/           Módulo de tests evaluativos (cuestionarios en PRIZMA a partir de un .docx)
+    models.py                 Estructuras de datos del documento (tests, secciones, preguntas)
+    parser.py                 Lectura del .docx y conversión a esas estructuras
+    validation.py             Validación del documento (errores y advertencias)
+    serializer.py             Exportación a JSON
+    automation.py             Automatización de PRIZMA con Playwright para crear los tests
+    state.py                  Estado en memoria de los trabajos y usuario de PRIZMA recordado
+    views.py                  HTML del módulo (layout, revisión y tarjeta de estado)
+    execution.py              Ejecución del cargue de tests en segundo plano
+    routes.py                 Rutas /tests/...
+scripts/
+  manage_users.py             Herramienta de consola para administrar usuarios
+  check_prizma_connection.py  Prueba manual de conexión con PRIZMA (navegador visible)
+static/                       Archivos estáticos (logo)
+.env.example                  Variables de entorno soportadas (sin valores)
 tests/                      Pruebas automáticas (pytest)
 uploads/ temp/ resultados/  Archivos de trabajo generados en ejecución (no se versionan)
 data/                       Usuarios, tokens, historial y reportes (no se versiona; contiene secretos)
@@ -158,7 +167,7 @@ python -m venv .venv
 Crear el primer usuario y arrancar el servidor:
 
 ```powershell
-.\.venv\Scripts\python gestionar_usuarios.py crear
+.\.venv\Scripts\python scripts\manage_users.py crear
 .\.venv\Scripts\uvicorn main:app --reload
 ```
 
@@ -170,7 +179,7 @@ Abrir http://127.0.0.1:8000 e iniciar sesión.
 
 ## Variables de entorno
 
-Ninguna es obligatoria para arrancar; las de Google son necesarias solo para usar la matriz por link.
+Ninguna es obligatoria para arrancar; las de Google son necesarias solo para usar la matriz por link. La lista completa (sin valores) está en `.env.example`; la app no lee archivos `.env` automáticamente, así que hay que definirlas en el entorno (o en Railway). Todas se leen en `auto_prizma/core/config.py`.
 
 | Variable | Descripción | Valor por defecto |
 |---|---|---|
@@ -203,15 +212,15 @@ Cada usuario pulsa **Conectar con Google** dentro de la app; su token queda en `
 
 ## Administración de usuarios
 
-Los usuarios se gestionan desde la consola con `gestionar_usuarios.py`. Todas las opciones piden los datos de forma interactiva y la contraseña no se muestra en pantalla.
+Los usuarios se gestionan desde la consola con `scripts/manage_users.py`. Todas las opciones piden los datos de forma interactiva y la contraseña no se muestra en pantalla.
 
 ```powershell
-python gestionar_usuarios.py listar       # Lista los usuarios y si tienen Google conectado
-python gestionar_usuarios.py crear        # Crea un usuario
-python gestionar_usuarios.py clave        # Cambia la contraseña de un usuario
-python gestionar_usuarios.py desactivar   # Impide el acceso sin borrar el usuario
-python gestionar_usuarios.py activar      # Vuelve a permitir el acceso
-python gestionar_usuarios.py borrar       # Elimina el usuario y su token de Google (pide confirmación; su historial se conserva)
+python scripts/manage_users.py listar       # Lista los usuarios y si tienen Google conectado
+python scripts/manage_users.py crear        # Crea un usuario
+python scripts/manage_users.py clave        # Cambia la contraseña de un usuario
+python scripts/manage_users.py desactivar   # Impide el acceso sin borrar el usuario
+python scripts/manage_users.py activar      # Vuelve a permitir el acceso
+python scripts/manage_users.py borrar       # Elimina el usuario y su token de Google (pide confirmación; su historial se conserva)
 ```
 
 La contraseña debe tener al menos 8 caracteres. Cada usuario también puede cambiar la suya desde **Mi contraseña** dentro de la app.
@@ -356,17 +365,17 @@ Las pruebas usan una carpeta de datos temporal (ver `tests/conftest.py`), así q
 Para probar manualmente la conexión con PRIZMA (abre un navegador visible y espera el inicio de sesión, sin modificar nada):
 
 ```powershell
-.\.venv\Scripts\python scripts\prueba_conexion_prizma.py
+.\.venv\Scripts\python scripts\check_prizma_connection.py
 ```
 
 ---
 
 ## Notas para mantenimiento
 
-- **Orden de arranque (`main.py`):** primero se importa `auto_prizma.integracion_motor`, que reemplaza en memoria algunas funciones de `motor_prizma` (`leer_actividades_excel`, `resolver_recurso`, `validar_carpeta_drive_para_actividad`), y luego se registran las rutas. Al modificar esas funciones hay que revisar ambos archivos.
-- **Botón "Test" en Cargue actual:** lo agrega `tests_evaluativos/vistas.py` (`_patch_main_nav`) en memoria sobre `auto_prizma/rutas/cargues.py`.
-- **Equivalencias de programas:** si PRIZMA usa un nombre de programa distinto al de la matriz, se agrega explícitamente en `EQUIVALENCIAS_PROGRAMAS` (`motor_prizma.py`). No se usa coincidencia aproximada a propósito.
-- **Límite de navegadores:** el máximo de 2 cargues simultáneos está fijado en `auto_prizma/trabajos.py` para no saturar el servidor.
+- **Orden de arranque (`main.py`):** primero se importa `auto_prizma.automation.prizma.engine_overrides`, que reemplaza en memoria algunas funciones del motor (`auto_prizma/automation/prizma/engine.py`) (`leer_actividades_excel`, `resolver_recurso`, `validar_carpeta_drive_para_actividad`), y luego se registran las rutas. Al modificar esas funciones hay que revisar ambos archivos.
+- **Botón "Test" en Cargue actual:** lo agrega `auto_prizma/evaluative_tests/views.py` (`_patch_main_nav`) en memoria sobre `auto_prizma/api/routes/uploads.py`.
+- **Equivalencias de programas:** si PRIZMA usa un nombre de programa distinto al de la matriz, se agrega explícitamente en `EQUIVALENCIAS_PROGRAMAS` (`auto_prizma/automation/prizma/engine.py`). No se usa coincidencia aproximada a propósito.
+- **Límite de navegadores:** el máximo de 2 cargues simultáneos está fijado en `auto_prizma/core/config.py` para no saturar el servidor.
 - **Respaldos:** no guardes copias como `main_backup_*.py`; git ya conserva cada versión (`git log -- archivo`, `git show <commit>:archivo`).
 
 ---

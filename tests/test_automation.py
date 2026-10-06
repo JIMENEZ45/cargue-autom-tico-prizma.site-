@@ -5,9 +5,9 @@ from docx import Document
 from fastapi.testclient import TestClient
 
 from main import app
-from auto_prizma.sesiones import _firmar_sesion
-from tests_evaluativos.automation import PrizmaTestAutomator, normalizar_texto
-from tests_evaluativos.models import DocumentTest, Question, Section
+from auto_prizma.services.auth import _firmar_sesion
+from auto_prizma.evaluative_tests.automation import PrizmaTestAutomator, normalizar_texto
+from auto_prizma.evaluative_tests.models import DocumentTest, Question, Section
 
 
 def _client() -> TestClient:
@@ -107,7 +107,7 @@ def test_estado_prizma_monitoring_and_json():
     job_id = analyzed.headers["location"].split("/")[2]
 
     # Mock PrizmaTestAutomator.ejecutar_cargue so test doesn't launch real browser
-    with patch("tests_evaluativos.ejecucion.PrizmaTestAutomator") as mock_cls:
+    with patch("auto_prizma.evaluative_tests.execution.PrizmaTestAutomator") as mock_cls:
         instance = mock_cls.return_value
         instance.ejecutar_cargue.return_value = {"ok": True, "simulacion": True, "procesados": 1, "total": 1}
 
@@ -342,7 +342,7 @@ def test_ejecutar_cargue_simulation_mode_does_not_click_guardar():
 
     test = DocumentTest(title="Test Simulado", sections=[])
 
-    with patch("tests_evaluativos.automation.sync_playwright") as mock_sp:
+    with patch("auto_prizma.evaluative_tests.automation.sync_playwright") as mock_sp:
         mock_p = MagicMock()
         mock_sp.return_value.__enter__.return_value = mock_p
 
@@ -378,7 +378,7 @@ def test_ejecutar_cargue_simulation_mode_does_not_click_guardar():
 
 
 def test_resolver_variantes_numericas():
-    from tests_evaluativos.automation import resolver_variantes_numericas
+    from auto_prizma.evaluative_tests.automation import resolver_variantes_numericas
 
     vars_3 = resolver_variantes_numericas("3")
     assert "tres" in vars_3
@@ -645,9 +645,9 @@ def test_guardar_creacion_test_raises_when_prizma_shows_error_alert():
 
 def test_estado_prizma_json_returns_dashboard_metrics_and_detail():
     from fastapi.testclient import TestClient
-    from tests_evaluativos.estado import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
+    from auto_prizma.evaluative_tests.state import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
     from main import app
-    from auto_prizma.sesiones import _firmar_sesion
+    from auto_prizma.services.auth import _firmar_sesion
 
     client = TestClient(app)
     client.cookies.set("ap_sesion", _firmar_sesion("adminlocal"))
@@ -689,10 +689,10 @@ def test_estado_prizma_json_returns_dashboard_metrics_and_detail():
 
 def test_ejecutar_prizma_endpoint_respects_unchecked_simulation():
     from fastapi.testclient import TestClient
-    from tests_evaluativos.models import TestDocument, DocumentTest
-    from tests_evaluativos.estado import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
+    from auto_prizma.evaluative_tests.models import TestDocument, DocumentTest
+    from auto_prizma.evaluative_tests.state import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
     from main import app
-    from auto_prizma.sesiones import _firmar_sesion
+    from auto_prizma.services.auth import _firmar_sesion
 
     client = TestClient(app)
     client.cookies.set("ap_sesion", _firmar_sesion("adminlocal"))
@@ -720,9 +720,9 @@ def test_ejecutar_prizma_endpoint_respects_unchecked_simulation():
 
 def test_status_prizma_renders_error_banner_on_failure():
     from fastapi.testclient import TestClient
-    from tests_evaluativos.estado import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
+    from auto_prizma.evaluative_tests.state import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
     from main import app
-    from auto_prizma.sesiones import _firmar_sesion
+    from auto_prizma.services.auth import _firmar_sesion
 
     client = TestClient(app)
     client.cookies.set("ap_sesion", _firmar_sesion("adminlocal"))
@@ -755,7 +755,7 @@ def test_status_prizma_renders_error_banner_on_failure():
 
 
 def test_simplificar_mensaje_error():
-    from tests_evaluativos.ejecucion import simplificar_mensaje_error
+    from auto_prizma.evaluative_tests.execution import simplificar_mensaje_error
 
     raw_pw = (
         'Error durante la automatización: Locator.click: Timeout 10000ms exceeded.\n'
@@ -778,9 +778,9 @@ def test_simplificar_mensaje_error():
 
 def test_cancelar_prizma_endpoint_registers_cancellation():
     from fastapi.testclient import TestClient
-    from tests_evaluativos.estado import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
+    from auto_prizma.evaluative_tests.state import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
     from main import app
-    from auto_prizma.sesiones import _firmar_sesion
+    from auto_prizma.services.auth import _firmar_sesion
 
     client = TestClient(app)
     client.cookies.set("ap_sesion", _firmar_sesion("adminlocal"))
@@ -817,9 +817,9 @@ def test_cancelar_prizma_endpoint_registers_cancellation():
 
 def test_status_prizma_renders_stop_button_and_detenido_banner():
     from fastapi.testclient import TestClient
-    from tests_evaluativos.estado import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
+    from auto_prizma.evaluative_tests.state import _AUTOMATION_JOBS, _AUTOMATION_LOCK, _JOBS
     from main import app
-    from auto_prizma.sesiones import _firmar_sesion
+    from auto_prizma.services.auth import _firmar_sesion
 
     client = TestClient(app)
     client.cookies.set("ap_sesion", _firmar_sesion("adminlocal"))
@@ -925,12 +925,12 @@ def test_guardar_creacion_test_locates_crear_beside_cancelar_and_waits():
 
 
 def test_ejecutar_cargue_honors_cancellation():
-    from tests_evaluativos.models import DocumentTest
+    from auto_prizma.evaluative_tests.models import DocumentTest
 
     automator = PrizmaTestAutomator()
     automator._tomar_captura = MagicMock(return_value="")
 
-    with patch("tests_evaluativos.automation.sync_playwright") as mock_pw:
+    with patch("auto_prizma.evaluative_tests.automation.sync_playwright") as mock_pw:
         mock_p_ctx = MagicMock()
         mock_pw.return_value.__enter__.return_value = mock_p_ctx
         mock_browser = MagicMock()
@@ -996,9 +996,9 @@ def test_extraer_valor_campo_formulario_input_y_container():
 
 
 def test_ejecutar_test_job_exitoso():
-    from tests_evaluativos.estado import _JOBS, _JOBS_LOCK, _AUTOMATION_JOBS
-    from tests_evaluativos.ejecucion import ejecutar_test_job
-    from tests_evaluativos.models import TestDocument, DocumentTest
+    from auto_prizma.evaluative_tests.state import _JOBS, _JOBS_LOCK, _AUTOMATION_JOBS
+    from auto_prizma.evaluative_tests.execution import ejecutar_test_job
+    from auto_prizma.evaluative_tests.models import TestDocument, DocumentTest
 
     job_id = "test-job-exec-1"
     doc = TestDocument(tests=[DocumentTest(title="Parcial 1", week="1", cut="1", description="", sections=[])])
@@ -1009,7 +1009,7 @@ def test_ejecutar_test_job_exitoso():
             "cascada_datos": {"programa": "Sistemas", "pensum": "P1", "nivel": "1", "asignatura": "Algoritmos"},
         }
 
-    with patch("tests_evaluativos.ejecucion.PrizmaTestAutomator.ejecutar_cargue") as mock_run:
+    with patch("auto_prizma.evaluative_tests.execution.PrizmaTestAutomator.ejecutar_cargue") as mock_run:
         mock_run.return_value = {"ok": True, "exitosos": 1, "procesados": 1}
         res = ejecutar_test_job(
             job_id=job_id,
@@ -1023,9 +1023,9 @@ def test_ejecutar_test_job_exitoso():
 
 
 def test_ejecutar_test_en_cargue_integracion():
-    from auto_prizma.trabajos import _ejecutar_test_en_cargue
-    from tests_evaluativos.estado import _JOBS, _JOBS_LOCK
-    from tests_evaluativos.models import TestDocument, DocumentTest
+    from auto_prizma.services.upload_jobs import _ejecutar_test_en_cargue
+    from auto_prizma.evaluative_tests.state import _JOBS, _JOBS_LOCK
+    from auto_prizma.evaluative_tests.models import TestDocument, DocumentTest
 
     job_id = "test-cargue-integ-1"
     doc = TestDocument(tests=[DocumentTest(title="Evaluación Final", week="16", cut="3", description="", sections=[])])
@@ -1047,7 +1047,7 @@ def test_ejecutar_test_en_cargue_integracion():
         "terminado": False,
     }
 
-    with patch("main.ejecutar_test_job", create=True) as mock_exec, patch("tests_evaluativos.ejecucion.ejecutar_test_job") as mock_exec_w:
+    with patch("main.ejecutar_test_job", create=True) as mock_exec, patch("auto_prizma.evaluative_tests.execution.ejecutar_test_job") as mock_exec_w:
         def fake_exec(*args, **kwargs):
             cb = kwargs.get("on_test_callback")
             if cb:
@@ -1071,8 +1071,8 @@ def test_ejecutar_test_en_cargue_integracion():
 
 def test_endpoint_estado_activo_json_y_home_card():
     from fastapi.testclient import TestClient
-    from tests_evaluativos.web import router
-    from tests_evaluativos.estado import _AUTOMATION_JOBS, _AUTOMATION_LOCK
+    from auto_prizma.evaluative_tests.routes import router
+    from auto_prizma.evaluative_tests.state import _AUTOMATION_JOBS, _AUTOMATION_LOCK
     from fastapi import FastAPI
 
     app = FastAPI()

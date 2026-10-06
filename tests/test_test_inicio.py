@@ -2,9 +2,9 @@ from io import BytesIO
 from docx import Document
 from fastapi.testclient import TestClient
 from main import app
-from auto_prizma.analisis import _parsear_datos_academicos
-from auto_prizma.sesiones import _firmar_sesion
-from tests_evaluativos.estado import _AUTOMATION_JOBS, _AUTOMATION_SYNC, _JOBS
+from auto_prizma.services.matrix_analysis import _parsear_datos_academicos
+from auto_prizma.services.auth import _firmar_sesion
+from auto_prizma.evaluative_tests.state import _AUTOMATION_JOBS, _AUTOMATION_SYNC, _JOBS
 import threading
 
 
@@ -141,7 +141,7 @@ def test_seleccionar_asignatura_endpoint():
 
 def test_facultad_opcional_en_automatizacion_y_revision():
     from unittest.mock import MagicMock
-    from tests_evaluativos.automation import PrizmaTestAutomator
+    from auto_prizma.evaluative_tests.automation import PrizmaTestAutomator
 
     # 1. Verificar que seleccionar_mui con Facultad retorna True si el selector no existe
     automator = PrizmaTestAutomator(base_url="https://admin.prizma.solutions", headless=True)
