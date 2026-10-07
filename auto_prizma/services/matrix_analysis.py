@@ -19,7 +19,7 @@ import csv
 import os
 import re
 
-from auto_prizma.core.config import GOOGLE_SHEETS_MAX_BYTES
+from auto_prizma.core.config import EXTENSIONES_HTML, GOOGLE_SHEETS_MAX_BYTES
 from auto_prizma.integrations.google.oauth import _cargar_credenciales_google
 from auto_prizma.integrations.google.drive import _misma_hoja
 
@@ -345,7 +345,11 @@ def analizar_excel(
     procesar_ova=True,
     procesar_retos=True,
     hoja_objetivo=None,
+    formato_recurso="H5P",
 ):
+    # formato_recurso: "H5P" o "HTML". En modo HTML las actividades de
+    # recurso interactivo (H5P) se muestran y cuentan como HTML.
+    modo_html = str(formato_recurso or "").strip().upper() == "HTML"
 
     libro = load_workbook(
         BytesIO(contenido_excel),
@@ -407,6 +411,7 @@ def analizar_excel(
         cantidad_retos = 0
         cantidad_h5p = 0
         cantidad_pdf = 0
+        cantidad_html = 0
 
         for fila in range(
             fila_cabecera + 1,
@@ -487,6 +492,9 @@ def analizar_excel(
             if tipo_archivo is None:
                 continue
 
+            if modo_html and tipo_archivo == "H5P":
+                tipo_archivo = "HTML"
+
             if categoria_prizma == "OVI":
                 cantidad_ovi += 1
 
@@ -501,6 +509,9 @@ def analizar_excel(
 
             if tipo_archivo == "PDF":
                 cantidad_pdf += 1
+
+            if tipo_archivo == "HTML":
+                cantidad_html += 1
 
             actividades.append(
                 {
@@ -570,6 +581,9 @@ def analizar_excel(
 
                 "pdf":
                     cantidad_pdf,
+
+                "html":
+                    cantidad_html,
             }
         )
 
@@ -582,10 +596,15 @@ def analizar_excel(
 
 def analizar_zip(
     contenido_zip,
+    formato_recurso="H5P",
 ):
+    # El total cuenta los archivos que se usaran en el cargue: H5P o HTML
+    # (segun el formato elegido) mas los PDF.
+    modo_html = str(formato_recurso or "").strip().upper() == "HTML"
 
     cantidad_h5p = 0
     cantidad_pdf = 0
+    cantidad_html = 0
 
     with zipfile.ZipFile(
         BytesIO(contenido_zip),
@@ -613,6 +632,10 @@ def analizar_zip(
 
                 cantidad_pdf += 1
 
+            elif extension in EXTENSIONES_HTML:
+
+                cantidad_html += 1
+
     return {
         "h5p":
             cantidad_h5p,
@@ -620,7 +643,10 @@ def analizar_zip(
         "pdf":
             cantidad_pdf,
 
+        "html":
+            cantidad_html,
+
         "total":
-            cantidad_h5p
+            (cantidad_html if modo_html else cantidad_h5p)
             + cantidad_pdf,
     }

@@ -13,6 +13,8 @@ import sys
 
 from fastapi.responses import HTMLResponse
 
+from auto_prizma.core.config import PRIZMA_HOST
+
 from .models import Severity, document_to_dict
 from .validation import validate_document
 from .state import (
@@ -434,7 +436,7 @@ def _render_review(job_id: str, job: dict, message: str = "") -> str:
             <div style="width:42px;height:42px;border-radius:12px;background:var(--morado);color:#fff;display:grid;place-items:center;font-size:22px;flex-shrink:0;">🛡</div>
             <div>
                 <h2 style="margin:0;font-size:20px;">Fase 3: Publicación y Carga en PRIZMA</h2>
-                <p style="margin:3px 0 0;font-size:13px;">Automatización con Playwright en tiempo real contra <strong>admin.prizma.site</strong></p>
+                <p style="margin:3px 0 0;font-size:13px;">Automatización con Playwright en tiempo real contra <strong>{html.escape(PRIZMA_HOST)}</strong></p>
             </div>
         </div>
 

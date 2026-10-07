@@ -13,6 +13,8 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
+from auto_prizma.core.config import PRIZMA_HOST
+
 from .models import Severity, document_from_dict
 from .parser import parse_docx_bytes
 from .serializer import serialize_test
@@ -472,7 +474,7 @@ def status_prizma(request: Request, job_id: str):
     filas_html = "".join(rows_tests)
 
     body = f'''<h1>{'Monitoreo de Simulación en PRIZMA' if es_sim else 'Monitoreo de Creación en PRIZMA'}</h1>
-    <p>Visualización y auditoría en tiempo real de cada test en <strong>admin.prizma.site</strong>.</p>
+    <p>Visualización y auditoría en tiempo real de cada test en <strong>{html.escape(PRIZMA_HOST)}</strong>.</p>
     <div class="pasos">
         <span class="paso">1 Entrada ✓</span>
         <span class="paso">2 Revisión ✓</span>

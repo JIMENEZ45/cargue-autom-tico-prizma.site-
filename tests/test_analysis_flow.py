@@ -113,7 +113,7 @@ def test_analyze_file_mode_registers_job_and_saves_files(limpiar_trabajos):
     assert trabajo["ruta_reporte"].endswith(" - " + trabajo["id"][:6] + ".csv")
     assert set(trabajo) == {
         "id", "ruta_excel", "ruta_zip", "carpeta_temp", "ruta_reporte",
-        "procesar_ovi", "procesar_ova", "procesar_retos", "etapa", "mensaje",
+        "procesar_ovi", "procesar_ova", "procesar_retos", "formato_recurso", "etapa", "mensaje",
         "total", "procesadas", "exitosas", "errores", "terminado",
         "detalle_actividades", "recursos_drive_resueltos", "hoja_objetivo",
         "origen_matriz", "nombre_matriz", "usuario_app", "cursos",
@@ -122,7 +122,8 @@ def test_analyze_file_mode_registers_job_and_saves_files(limpiar_trabajos):
     }
 
     resultado = trabajo["resultado_analisis"]
-    assert set(resultado) == {"hojas", "zip", "drive", "origen_matriz", "nombre_matriz"}
+    assert set(resultado) == {"hojas", "zip", "drive", "origen_matriz", "nombre_matriz", "formato_recurso"}
+    assert trabajo["formato_recurso"] == resultado["formato_recurso"] == "H5P"
     assert resultado["drive"]["modo"] == "archivo"
     assert resultado["drive"]["total_actividades"] == 3
     assert trabajo["id"] in respuesta.text
@@ -147,3 +148,64 @@ def test_analyze_validation_errors_do_not_create_jobs(limpiar_trabajos, datos, c
     assert respuesta.status_code == 200
     assert mensaje in respuesta.text
     assert nuevos == []
+
+
+# ============================================================
+# FORMATO HTML
+# ============================================================
+
+def _zip_html():
+    salida = io.BytesIO()
+    with zipfile.ZipFile(salida, "w") as archivo:
+        archivo.writestr("Infografía de costos.html", "<html><body>Costos</body></html>".encode("utf-8"))
+        archivo.writestr("Lectura guía.pdf", b"%PDF")
+    return salida.getvalue()
+
+
+def test_analyze_html_format_marks_interactive_activities_as_html(limpiar_trabajos):
+    respuesta, nuevos = _analizar(
+        {"ovi": "1", "ova": "1", "retos": "1", "formato_recurso": "html"},
+        matriz=_matriz_xlsx(),
+        recursos=_zip_html(),
+    )
+
+    assert respuesta.status_code == 200
+    trabajo = nuevos[0]
+    resultado = trabajo["resultado_analisis"]
+    assert trabajo["formato_recurso"] == resultado["formato_recurso"] == "HTML"
+    tipos = {a["nombre"]: a["tipo"] for a in resultado["hojas"][0]["actividades"]}
+    assert tipos == {"Infografía de costos": "HTML", "Lectura guía": "PDF", "Reto 1": "PDF"}
+    assert resultado["hojas"][0]["html"] == 1 and resultado["hojas"][0]["h5p"] == 0
+    assert resultado["zip"] == {"h5p": 0, "pdf": 1, "html": 1, "total": 2}
+    assert '<span class="badge badge-html">HTML</span>' in respuesta.text
+    assert "recurso(s) HTML/PDF detectado(s) en el ZIP" in respuesta.text
+
+
+def test_analyze_rejects_unknown_resource_format(limpiar_trabajos):
+    respuesta, nuevos = _analizar(
+        {"ovi": "1", "formato_recurso": "SCORM"},
+        matriz=_matriz_xlsx(),
+        recursos=_zip_recursos(),
+    )
+
+    assert "Formato de recurso no válido" in respuesta.text
+    assert nuevos == []
+
+
+def test_html_format_with_google_link_skips_drive_validation(monkeypatch, limpiar_trabajos):
+    from auto_prizma.services import upload_jobs
+
+    def no_debe_llamarse(*args, **kwargs):
+        raise AssertionError("en modo HTML no se valida contra Drive")
+
+    monkeypatch.setattr(upload_jobs, "_prevalidar_recursos_drive_zip_ultrarapido", no_debe_llamarse)
+
+    trabajo_id, resultado = upload_jobs.create_analyzed_job(
+        _matriz_xlsx(), _zip_html(), [{"curso": "C", "programa": "P", "actividades": [{}]}],
+        {"total": 2}, "link", "https://docs.google.com/spreadsheets/d/x/edit#gid=0", "Curso A",
+        "Curso A", True, True, True, "adminlocal", formato_recurso="HTML",
+    )
+
+    assert resultado["drive"]["modo"] == "html"
+    assert upload_jobs.TRABAJOS[trabajo_id]["recursos_drive_resueltos"] == {}
+

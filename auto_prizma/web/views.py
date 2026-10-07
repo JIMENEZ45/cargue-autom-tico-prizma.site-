@@ -3,6 +3,7 @@
 
 import html
 
+from auto_prizma.core.config import PRIZMA_ES_PRODUCCION, PRIZMA_HOST
 from auto_prizma.services.auth import (
     _nombre_visible,
     _usuario_actual,
@@ -15,6 +16,23 @@ from auto_prizma.services.upload_jobs import _codificar_clave_actividad
 # ============================================================
 # HTML PRINCIPAL
 # ============================================================
+
+def _aviso_ambiente_prizma():
+    """Aviso visible cuando la app apunta a un PRIZMA que no es produccion.
+
+    En produccion devuelve "" para no alterar la pagina.
+    """
+    if PRIZMA_ES_PRODUCCION:
+        return ""
+
+    return (
+        '<div class="aviso-ambiente" role="status" style="margin:0 0 18px;padding:12px 16px;'
+        'border-radius:12px;border:1px solid #fedf89;background:#fffaeb;color:#93370d;font-size:14px;">'
+        "🧪 <strong>Ambiente de pruebas de PRIZMA:</strong> " + html.escape(PRIZMA_HOST)
+        + ". Los cargues de esta instancia no van a producción."
+        "</div>"
+    )
+
 
 def generar_html(
     resultado=None,
@@ -169,7 +187,7 @@ def generar_html(
                         </div>
                         <div>
                             <strong>ZIP de recursos</strong>
-                            <span>Archivos H5P y PDF · también puedes arrastrarlo aquí</span>
+                            <span>Archivos H5P o HTML y PDF · también puedes arrastrarlo aquí</span>
                         </div>
                     </div>
                     <div class="selector-archivo">
@@ -236,6 +254,25 @@ def generar_html(
                     <strong>Test Evaluativo</strong>
                     <small>Exámenes desde Word / Google Docs</small>
                 </label>
+            </div>
+
+            <div class="formato-recurso" style="margin-top:18px;">
+                <p style="margin:0 0 8px;font-size:13px;color:#475467;">
+                    <strong>Formato de los recursos interactivos</strong>
+                    · OVA y OVI de tipo H5P o infografía (los PDF no cambian)
+                </p>
+                <div class="selector-modo-matriz" style="display:flex;gap:10px;flex-wrap:wrap;">
+                    <label style="flex:1;min-width:180px;border-radius:12px;padding:12px 14px;cursor:pointer;">
+                        <input type="radio" name="formato_recurso" value="H5P" checked>
+                        <strong style="margin-left:7px;">🧩 H5P</strong>
+                        <span style="display:block;margin:5px 0 0 25px;color:#667085;font-size:12px;">Sube el archivo .h5p al campo Recurso</span>
+                    </label>
+                    <label style="flex:1;min-width:180px;border-radius:12px;padding:12px 14px;cursor:pointer;">
+                        <input type="radio" name="formato_recurso" value="HTML">
+                        <strong style="margin-left:7px;">&lt;/&gt; HTML</strong>
+                        <span style="display:block;margin:5px 0 0 25px;color:#667085;font-size:12px;">Pega el código del archivo .html en el campo Html</span>
+                    </label>
+                </div>
             </div>
 
             <div id="bloque-test" style="display:none;margin-top:10px;">
@@ -352,7 +389,7 @@ def generar_html(
 
             <h3 class="titulo-consejos">Consejos</h3>
             <p class="consejo">✓ En modo link, la matriz debe conservar los enlaces de Google Drive. En modo archivo no necesitas Google.</p>
-            <p class="consejo">✓ El ZIP debe contener los H5P y PDF correspondientes.</p>
+            <p class="consejo">✓ El ZIP debe contener los H5P (o los HTML) y PDF correspondientes.</p>
             <p class="consejo">✓ Revisa el análisis antes de iniciar el cargue.</p>
         </aside>
         """
@@ -369,6 +406,7 @@ def generar_html(
         total_retos = 0
         total_h5p = 0
         total_pdf = 0
+        total_html = 0
         filas_html = ""
         tipos_recurso_conteo = {}
         tipos_recurso_seleccionados = {}
@@ -386,9 +424,14 @@ def generar_html(
 
         origen_matriz = str(resultado.get("origen_matriz") or "link").strip().lower()
         nombre_matriz = str(resultado.get("nombre_matriz") or "").strip()
-        es_modo_archivo = origen_matriz == "archivo"
-
         drive_info = resultado.get("drive") or {}
+
+        # Modo HTML: los .html solo vienen en el ZIP (sin validacion Drive).
+        modo_html = str(resultado.get("formato_recurso") or "H5P").upper() == "HTML"
+        es_modo_archivo = (
+            origen_matriz == "archivo"
+            or str(drive_info.get("modo") or "") == "html"
+        )
         drive_validados = int(drive_info.get("validadas_drive") or 0)
         drive_coincidencias_zip = int(drive_info.get("coincidencias_zip") or 0)
         advertencias_drive = list(drive_info.get("advertencias") or [])
@@ -407,6 +450,7 @@ def generar_html(
             total_retos += hoja.get("retos", 0)
             total_h5p += hoja.get("h5p", 0)
             total_pdf += hoja.get("pdf", 0)
+            total_html += hoja.get("html", 0)
 
             for actividad in hoja["actividades"]:
 
@@ -450,6 +494,8 @@ def generar_html(
                 clase_tipo = (
                     "badge-pdf"
                     if actividad["tipo"] == "PDF"
+                    else "badge-html"
+                    if actividad["tipo"] == "HTML"
                     else "badge-h5p"
                 )
 
@@ -625,9 +671,15 @@ def generar_html(
 
         if es_modo_archivo:
             resumen_origen = (
-                "Modo archivo · " + e(nombre_matriz or "Matriz local")
+                ("Modo archivo · " if origen_matriz == "archivo" else "Google Sheets · ")
+                + e(nombre_matriz or ("Matriz local" if origen_matriz == "archivo" else "Google Sheets"))
                 + " · " + str(int((resultado.get("zip") or {}).get("total") or 0))
-                + " recurso(s) H5P/PDF detectado(s) en el ZIP"
+                + " recurso(s) " + ("HTML" if modo_html else "H5P") + "/PDF detectado(s) en el ZIP"
+                + (
+                    " · formato HTML: sin validación contra Drive"
+                    if modo_html and origen_matriz != "archivo"
+                    else ""
+                )
             )
             encabezado_recurso = "Resolución de recurso"
             encabezado_estado = "Estado"
@@ -680,7 +732,7 @@ def generar_html(
             <div class="resumen-card verde"><span>OVI</span><strong>{total_ovi}</strong></div>
             <div class="resumen-card azul"><span>OVA</span><strong>{total_ova}</strong></div>
             <div class="resumen-card morado"><span>Retos</span><strong>{total_retos}</strong></div>
-            <div class="resumen-card violeta"><span>H5P</span><strong>{total_h5p}</strong></div>
+            <div class="resumen-card violeta"><span>{"HTML" if modo_html else "H5P"}</span><strong>{total_html if modo_html else total_h5p}</strong></div>
             <div class="resumen-card rojo"><span>PDF</span><strong>{total_pdf}</strong></div>
         </section>
 
@@ -1176,6 +1228,7 @@ def generar_html(
             .badge-gris { background: #f2f4f7; color: #475467; }
             .badge-h5p { background: #f1ebff; color: #6941c6; }
             .badge-pdf { background: #fff0f1; color: #d92d20; }
+            .badge-html { background: #ecfdf3; color: #067647; }
 
             .campo-label { display: block; font-size: 13px; font-weight: 700; margin: 18px 0 8px; }
             .campo-moderno { display: flex; align-items: center; gap: 10px; border: 1px solid #d7dbe5; border-radius: 10px; padding: 0 12px; background: #fff; }
@@ -1246,7 +1299,7 @@ def generar_html(
 
             <main class="contenido">
                 <div class="layout-inicio">
-                    """ + contenido + """
+                    """ + _aviso_ambiente_prizma() + contenido + """
                 </div>
             </main>
         </div>

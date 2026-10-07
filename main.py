@@ -23,7 +23,7 @@ import auto_prizma.api.routes.analysis  # noqa: F401
 import auto_prizma.api.routes.uploads  # noqa: F401
 import auto_prizma.api.routes.reports  # noqa: F401
 
-from auto_prizma.core.config import RESULTADOS_DIR
+from auto_prizma.core.config import PRIZMA_BASE_URL, PRIZMA_ES_PRODUCCION, RESULTADOS_DIR
 from auto_prizma.integrations.google.oauth import _descargar_google_docx_para_tests
 from auto_prizma.services.history import _historial_del_usuario
 from auto_prizma.services.upload_jobs import TRABAJOS
@@ -40,3 +40,9 @@ app.state.trabajos_cargue = TRABAJOS
 app.state.historial_cargues = _historial_del_usuario
 app.state.resultados_dir = RESULTADOS_DIR
 app.include_router(tests_evaluativos_router)
+
+print(
+    "PRIZMA:",
+    PRIZMA_BASE_URL,
+    "(produccion)" if PRIZMA_ES_PRODUCCION else "(AMBIENTE DE PRUEBAS)",
+)

@@ -15,6 +15,7 @@ import zipfile
 
 from auto_prizma.core.application import app
 from auto_prizma.core.clock import _ahora_colombia_iso
+from auto_prizma.core.config import FORMATOS_RECURSO_INTERACTIVO
 from auto_prizma.services.auth import _usuario_actual
 from auto_prizma.integrations.google.drive import _resolver_hoja_objetivo
 from auto_prizma.services.upload_jobs import create_analyzed_job
@@ -65,6 +66,7 @@ async def analizar(
     modo_test: str = Form(default="archivo"),
     test_datos_academicos: str | None = Form(default=None),
     test_semestre: str | None = Form(default=None),
+    formato_recurso: str = Form(default="H5P"),
 ):
 
     try:
@@ -125,6 +127,12 @@ async def analizar(
             if not procesar_recursos:
                 return RedirectResponse(f"/tests/{test_job_id}/revision", status_code=303)
 
+        formato_recurso = str(formato_recurso or "").strip().upper() or "H5P"
+        if formato_recurso not in FORMATOS_RECURSO_INTERACTIVO:
+            return generar_html(
+                error="Formato de recurso no válido: elige H5P o HTML."
+            )
+
         nombre_archivo_matriz = (
             str(getattr(matriz_archivo, "filename", "") or "").strip()
             if matriz_archivo is not None
@@ -169,6 +177,7 @@ async def analizar(
             procesar_ova,
             procesar_retos,
             hoja_objetivo,
+            formato_recurso=formato_recurso,
         )
 
         if not hojas:
@@ -187,7 +196,7 @@ async def analizar(
             )
 
         try:
-            zip_info = analizar_zip(contenido_zip)
+            zip_info = analizar_zip(contenido_zip, formato_recurso=formato_recurso)
         except zipfile.BadZipFile:
             return generar_html(error="El ZIP no es válido.")
 
@@ -221,6 +230,7 @@ async def analizar(
             _usuario_actual(),
             test_job_id=test_job_id,
             test_info=test_info,
+            formato_recurso=formato_recurso,
         )
 
         return generar_html(

@@ -109,6 +109,7 @@ auto_prizma/                  Código de la aplicación
   automation/prizma/          Automatización de PRIZMA con Playwright
     engine.py                 Motor de cargue: lectura de la matriz y automatización de PRIZMA
     engine_overrides.py       Ajustes que se aplican sobre el motor al arrancar
+    html_field.py             Formato HTML: leer el .html, escribirlo en el campo Html y quitar el archivo previo de Recurso
   domain/
     drive_resource_policy.py  Reglas para decidir qué recurso de Drive corresponde a cada actividad
     file_names.py             Nombre base y clave exacta de nombres de archivo
@@ -192,6 +193,18 @@ Ninguna es obligatoria para arrancar; las de Google son necesarias solo para usa
 | `AUTO_PRIZMA_SECRET` | Clave para firmar las cookies de sesión. Si no se define, se genera una y se guarda en `data/secreto_sesion.txt`. | Generada automáticamente |
 | `AUTO_PRIZMA_COOKIE_SECURE` | `1` para marcar la cookie como `Secure` (solo HTTPS). También se activa sola si `GOOGLE_REDIRECT_URI` empieza por `https://`. | Desactivada |
 | `AUTO_PRIZMA_MAX_SIMULTANEOS` | Cargues que pueden correr a la vez. Solo admite `1` o `2`; cualquier otro valor se toma como `2`. | `2` |
+| `AUTO_PRIZMA_URL_PRIZMA` | URL de PRIZMA. Vacía = producción. Para probar sin tocar producción se usa el ambiente de pruebas `https://admin.prizma.solutions`; la pantalla muestra un aviso mientras no sea producción. | `https://admin.prizma.site` |
+
+### Probar en el ambiente de pruebas de PRIZMA
+
+En una terminal de PowerShell (la variable solo vale para esa terminal):
+
+```powershell
+$env:AUTO_PRIZMA_URL_PRIZMA = "https://admin.prizma.solutions"
+python -m uvicorn main:app --reload
+```
+
+Al arrancar se imprime `PRIZMA: https://admin.prizma.solutions (AMBIENTE DE PRUEBAS)` y la página principal muestra el aviso. Las credenciales que se escriban son las del ambiente de pruebas. Para volver a producción basta con cerrar esa terminal (o `Remove-Item Env:AUTO_PRIZMA_URL_PRIZMA`) y reiniciar. En Railway no se define, así que allí siempre se usa producción.
 | `GOOGLE_CLIENT_ID` | ID del cliente OAuth de Google. | — |
 | `GOOGLE_CLIENT_SECRET` | Secreto del cliente OAuth de Google. | — |
 | `GOOGLE_REDIRECT_URI` | URL de retorno de Google: `https://<dominio>/google/callback`. | — |
@@ -257,11 +270,23 @@ Las filas sin nombre o sin categoría se omiten.
 ### Pasos en la aplicación
 
 1. **Matriz:** elegir *Por link* (pegar el enlace de Google Sheets; requiere Google conectado) o *Por archivo* (subir `.xlsx` o `.csv`; no requiere Google).
-2. **Recursos:** subir el ZIP con los archivos H5P y PDF de las actividades.
-3. **Categorías:** marcar OVI, OVA, Retos evaluativos y/o Test evaluativo.
+2. **Recursos:** subir el ZIP con los archivos H5P (o HTML) y PDF de las actividades.
+3. **Categorías:** marcar OVI, OVA, Retos evaluativos y/o Test evaluativo, y elegir el **formato de los recursos interactivos**: *H5P* o *HTML* (ver abajo).
 4. **Analizar:** revisar las actividades encontradas, el recurso asignado a cada una y las advertencias.
 5. **Iniciar:** seleccionar las actividades, ingresar usuario y contraseña de PRIZMA e iniciar. Si ya hay 2 cargues en curso, el nuevo espera en cola.
 6. **Seguimiento:** ver el avance en *Cargue actual*; se puede cancelar en cualquier momento.
+
+### Formato H5P o HTML
+
+Las actividades con recurso interactivo (OVA y OVI de tipo H5P o infografía) se pueden cargar de dos formas; los PDF no cambian:
+
+- **H5P:** el archivo `.h5p` del ZIP se sube al campo *Recurso* de la actividad.
+- **HTML:** el código completo del archivo `.html` (o `.htm`) del ZIP se pega en el campo *Html* de la actividad.
+  - Cada archivo debe llamarse igual que su actividad (por ejemplo `Presupuestar Paso a Paso.html`); si dos archivos coinciden con la misma actividad, la fila no se carga.
+  - El archivo debe estar en UTF-8 y ser **autocontenido**: CSS, JavaScript e imágenes incrustados o con URL absoluta (las rutas relativas no funcionan una vez pegado en PRIZMA).
+  - Antes de guardar se verifica que el campo Html quedó idéntico al archivo.
+  - PRIZMA no permite un archivo en *Recurso* y Html a la vez: si la actividad ya tenía **cualquier archivo** en *Recurso* (un H5P u otro; a veces PRIZMA solo lo muestra como "Archivo"), se elimina (papelera y confirmación *Eliminar*) y queda anotado en el reporte con su nombre (configurable con `PRIZMA_VACIAR_RECURSO_CON_HTML` en `auto_prizma/core/config.py`). Antes de quitar nada se comprueba que el `.html` se puede leer; si no, la actividad no se toca.
+  - En formato HTML no se valida contra las carpetas de Drive de la columna G: los HTML solo vienen en el ZIP.
 
 ### Reporte
 

@@ -17,6 +17,7 @@ from collections import deque
 
 from auto_prizma.core.clock import _ahora_colombia_iso
 from auto_prizma.core.config import (
+    FORMATO_RECURSO_POR_DEFECTO,
     MAX_CARGUES_SIMULTANEOS,
     RESULTADOS_DIR,
     TEMP_DIR,
@@ -148,6 +149,7 @@ def ejecutar_cargue_con_historial(
             contrasena_prizma,
             trabajo,
             trabajo.get("seleccion_actividades"),
+            formato_recurso=trabajo.get("formato_recurso") or FORMATO_RECURSO_POR_DEFECTO,
         )
     finally:
         try:
@@ -448,6 +450,7 @@ def create_analyzed_job(
     usuario_app,
     test_job_id=None,
     test_info=None,
+    formato_recurso=FORMATO_RECURSO_POR_DEFECTO,
 ):
     """Registra un trabajo de cargue a partir de un analisis valido.
 
@@ -468,6 +471,8 @@ def create_analyzed_job(
         usuario_app: usuario de la aplicacion dueno del trabajo.
         test_job_id: id del Test Evaluativo combinado, si lo hay.
         test_info: resumen del Test Evaluativo para la pagina, si lo hay.
+        formato_recurso: "H5P" o "HTML". En modo HTML no se valida contra
+            Drive: los .html solo vienen en el ZIP y se emparejan por nombre.
 
     Returns:
         (trabajo_id, resultado): resultado es lo que muestra la pagina de analisis.
@@ -493,7 +498,9 @@ def create_analyzed_job(
     carpeta_temp = os.path.join(TEMP_DIR, trabajo_id)
     os.makedirs(carpeta_temp, exist_ok=True)
 
-    if modo_matriz == "link":
+    modo_html = str(formato_recurso or "").strip().upper() == "HTML"
+
+    if modo_matriz == "link" and not modo_html:
         preflight_drive = _prevalidar_recursos_drive_zip_ultrarapido(
             google_sheet_url,
             ruta_excel,
@@ -528,12 +535,13 @@ def create_analyzed_job(
                 + resumen_errores
             )
     else:
-        # En modo archivo no se consulta Google. El motor conserva su
-        # resolvedor seguro de recursos del ZIP y nunca elige ambiguos.
+        # En modo archivo (o en modo HTML) no se valida contra Drive. El motor
+        # conserva su resolvedor seguro de recursos del ZIP y nunca elige
+        # ambiguos.
         recursos_drive_resueltos = {}
         preflight_drive = {
             "ok": True,
-            "modo": "archivo",
+            "modo": "html" if modo_html else "archivo",
             "total_actividades": sum(
                 len(hoja.get("actividades") or []) for hoja in hojas
             ),
@@ -559,6 +567,7 @@ def create_analyzed_job(
         "procesar_ovi": procesar_ovi,
         "procesar_ova": procesar_ova,
         "procesar_retos": procesar_retos,
+        "formato_recurso": "HTML" if modo_html else "H5P",
         "etapa": "analizado",
         "mensaje": "Archivos analizados correctamente.",
         "total": 0,
@@ -584,6 +593,7 @@ def create_analyzed_job(
         "drive": preflight_drive,
         "origen_matriz": modo_matriz,
         "nombre_matriz": nombre_matriz,
+        "formato_recurso": "HTML" if modo_html else "H5P",
     }
 
     if test_info is not None:

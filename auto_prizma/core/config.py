@@ -9,6 +9,7 @@ antes, para no cambiar su comportamiento.
 """
 
 import os
+from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 
@@ -22,6 +23,7 @@ from zoneinfo import ZoneInfo
 #   AUTO_PRIZMA_COOKIE_SECURE   "1" fuerza la cookie Secure
 #   AUTO_PRIZMA_MAX_SIMULTANEOS limite de cargues simultaneos (1 o 2)
 #   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI
+#   AUTO_PRIZMA_URL_PRIZMA      URL de PRIZMA (vacio = produccion)
 #
 # Las variables de Google y de la cookie se leen en CADA llamada (no al
 # importar), igual que antes de centralizarlas.
@@ -198,8 +200,34 @@ MAX_CARGUES_SIMULTANEOS = _resolver_max_cargues_simultaneos(
 # PRIZMA Y NAVEGADOR
 # ============================================================
 
-PRIZMA_BASE_URL = "https://admin.prizma.site"
+# URL de PRIZMA. Por defecto produccion. Para probar sin tocar produccion se
+# define AUTO_PRIZMA_URL_PRIZMA con el ambiente de pruebas (por ejemplo
+# https://admin.prizma.solutions) y se reinicia la app. Se lee al importar.
+# Railway no la define, asi que alli siempre se usa produccion.
+PRIZMA_URL_PRODUCCION = "https://admin.prizma.site"
+
+
+def _resolver_url_prizma(valor):
+    """URL base de PRIZMA a partir del valor de AUTO_PRIZMA_URL_PRIZMA.
+
+    Args:
+        valor: texto de la variable de entorno ("" o None = produccion).
+
+    Returns:
+        URL sin "/" final; si falta el esquema se asume https://.
+    """
+    url = str(valor or "").strip().rstrip("/")
+    if not url:
+        return PRIZMA_URL_PRODUCCION
+    if not url.lower().startswith(("http://", "https://")):
+        url = "https://" + url
+    return url
+
+
+PRIZMA_BASE_URL = _resolver_url_prizma(env_str("AUTO_PRIZMA_URL_PRIZMA"))
 URL_PRIZMA = PRIZMA_BASE_URL + "/inicio-sesion"
+PRIZMA_HOST = urlparse(PRIZMA_BASE_URL).netloc or PRIZMA_BASE_URL
+PRIZMA_ES_PRODUCCION = PRIZMA_BASE_URL == PRIZMA_URL_PRODUCCION
 
 # Argumentos de Chromium usados por todas las automatizaciones headless.
 # Se copian (list(...)) en cada uso para que nadie modifique el original.
@@ -220,3 +248,26 @@ PRIZMA_ESPERAS_REINTENTO_SESION = (5, 15)
 # usar H5P y se implemente HTML, poner False: el motor cancelara sin guardar y
 # reportara ERROR_HTML_Y_H5P para revisar a mano.
 PRIZMA_VACIAR_HTML_CON_H5P = True
+
+
+# ============================================================
+# FORMATO DE LOS RECURSOS INTERACTIVOS (H5P / HTML)
+# ============================================================
+#
+# Se elige en cada cargue. Afecta a las actividades que llevan recurso
+# interactivo (OVA y OVI de tipo H5P o infografia); los PDF no cambian.
+#   "H5P":  se sube el archivo .h5p al campo "Recurso" de la actividad.
+#   "HTML": se pega el codigo completo del archivo .html en el campo "Html".
+FORMATOS_RECURSO_INTERACTIVO = ("H5P", "HTML")
+FORMATO_RECURSO_POR_DEFECTO = "H5P"
+
+# Extensiones que se aceptan como archivo HTML dentro del ZIP.
+EXTENSIONES_HTML = (".html", ".htm")
+
+# Politica del modo HTML (decisiones del usuario, 2026-10-06 y 2026-10-07):
+# PRIZMA no permite un archivo en "Recurso" y Html a la vez. True = si la
+# actividad ya tiene CUALQUIER archivo en "Recurso" (H5P o no; a veces PRIZMA
+# solo lo muestra como "Archivo"), el motor lo elimina antes de guardar el HTML
+# y lo deja en el reporte. False = no toca la actividad, cancela sin guardar y
+# reporta ERROR_RECURSO_Y_HTML.
+PRIZMA_VACIAR_RECURSO_CON_HTML = True

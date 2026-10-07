@@ -33,7 +33,7 @@ core/config.py     = toda la configuración; core/application.py = instancia Fas
 
 ### Estado de la reorganización (2026-10-06)
 
-Se está reorganizando por fases. Hechas: **Fase 1–2** (auditoría y propuesta), **Fase 3** (estructura y nombres en inglés) y **Fase 4** (configuración centralizada) — commit `9b2c1e5`, sin cambios de comportamiento (mismas rutas, mismo HTML byte a byte). **Red de seguridad para la fase 7**: pruebas de caracterización del motor y de `drive_resource_policy` — commit `1e43574`. **Correcciones del motor** (campo Html vs H5P, diagnóstico de guardado, reintentos de sesión inicial, `import sys`) — commit `0e9ae40`. **Fase 5** (servicios): lógica de `/analizar`, `/iniciar`, `/cargue-actual`, `/cancelar`, `/estado` y reportes movida a `services/`; historial en `services/history.py`; escritura atómica única (`core/storage.py`); hora en `core/clock.py`; nombres de archivo en `domain/file_names.py`; código muerto eliminado; la contraseña PRIZMA ya no se retiene en el trabajo. Verificado: mismas rutas, mismo HTML y misma salida de `/analizar` que el código original. Pendientes: **6** integraciones, **7** dividir `automation/prizma/engine.py` (~5800 líneas) y eliminar el monkeypatching, **8** rutas (pasar a `APIRouter`, layout HTML común), **9** más tests, **10** `docs/ARCHITECTURE.md`.
+Se está reorganizando por fases. Hechas: **Fase 1–2** (auditoría y propuesta), **Fase 3** (estructura y nombres en inglés) y **Fase 4** (configuración centralizada) — commit `9b2c1e5`, sin cambios de comportamiento (mismas rutas, mismo HTML byte a byte). **Red de seguridad para la fase 7**: pruebas de caracterización del motor y de `drive_resource_policy` — commit `1e43574`. **Correcciones del motor** (campo Html vs H5P, diagnóstico de guardado, reintentos de sesión inicial, `import sys`) — commit `0e9ae40`. **Fase 5** (servicios): lógica de `/analizar`, `/iniciar`, `/cargue-actual`, `/cancelar`, `/estado` y reportes movida a `services/`; historial en `services/history.py`; escritura atómica única (`core/storage.py`); hora en `core/clock.py`; nombres de archivo en `domain/file_names.py`; código muerto eliminado; la contraseña PRIZMA ya no se retiene en el trabajo. Verificado: mismas rutas, mismo HTML y misma salida de `/analizar` que el código original. **Formato HTML para los recursos interactivos** (ver PRIZMA): probado en el ambiente de pruebas de PRIZMA e integrado en `main` el 2026-10-07. Pendientes: **6** integraciones, **7** dividir `automation/prizma/engine.py` (~5800 líneas) y eliminar el monkeypatching, **8** rutas (pasar a `APIRouter`, layout HTML común), **9** más tests, **10** `docs/ARCHITECTURE.md`.
 
 ## Estructura del proyecto
 
@@ -65,7 +65,8 @@ auto-prizma-pro/
 │   │   └── drive.py                # Enlaces de columna G (Sheets API), listado de carpetas (Drive API)
 │   ├── automation/prizma/
 │   │   ├── engine.py               # Motor de cargue PRIZMA (Playwright) + lectura de matriz + reporte CSV
-│   │   └── engine_overrides.py     # Reemplaza funciones del motor al importarse (ver Decisiones)
+│   │   ├── engine_overrides.py     # Reemplaza funciones del motor al importarse (ver Decisiones)
+│   │   └── html_field.py           # Formato HTML: leer el .html, escribirlo en el campo Html, quitar el archivo previo de Recurso
 │   ├── domain/
 │   │   ├── drive_resource_policy.py# Reglas puras de emparejamiento Drive ↔ ZIP
 │   │   └── file_names.py           # file_base_name / exact_name_key (nombres de archivo)
@@ -169,7 +170,7 @@ Necesario solo para la matriz por enlace y Google Docs de tests. Configuración 
 
 ## PRIZMA
 
-- URL: `config.URL_PRIZMA` (`PRIZMA_BASE_URL + "/inicio-sesion"`).
+- URL: `config.URL_PRIZMA` (`PRIZMA_BASE_URL + "/inicio-sesion"`). Producción por defecto (`admin.prizma.site`); con `AUTO_PRIZMA_URL_PRIZMA` se apunta a otro ambiente, p. ej. el de **pruebas `https://admin.prizma.solutions`** (mismo formulario de login, verificado el 2026-10-07). Fuera de producción la página principal muestra un aviso (`views._aviso_ambiente_prizma`) y `main.py` imprime `PRIZMA: ... (AMBIENTE DE PRUEBAS)`. **Probar cambios del motor siempre en el ambiente de pruebas, nunca en producción.** Decisión del usuario (2026-10-07): la variable se conserva para probar en local; Railway no la define, así que allí siempre se usa producción.
 - Credenciales PRIZMA: las escribe el usuario en cada cargue; se validan antes de encolar (`validar_credenciales_prizma`), viajan en el trabajo como `usuario_prizma_temporal`/`contrasena_prizma_temporal` y se eliminan al arrancar el hilo o cancelar. Nunca se persisten. El módulo de tests solo recuerda el **nombre de usuario** PRIZMA (`<raíz>/data/tokens/prizma_<usuario>.json`).
 - Equivalencias de nombres de programa: `EQUIVALENCIAS_PROGRAMAS` en `engine.py` (explícitas; sin coincidencia aproximada a propósito).
 - Matriz esperada: A1 programa, A2 curso, cabecera "Semana correspondiente" en columna A (primeras 30 filas); columnas A semana, B unidad, D actividad, E categoría, F tipo de recurso, G enlace Drive.
@@ -177,7 +178,15 @@ Necesario solo para la matriz por enlace y Google Docs de tests. Configuración 
   - Solo aplica a actividades H5P (o si aparece el aviso). El editor se busca únicamente entre el título "Html" y el título "Recurso…" (`_XPATH_EDITOR_HTML`), así nunca toca la Descripción. Soporta `textarea`, `contenteditable`, CodeMirror y Monaco; se verifica que quedó vacío o que desapareció el aviso (`_vaciar_editor_html`).
   - Dos momentos: antes del primer clic en Guardar (si se detecta contenido) y, si PRIZMA solo avisa al guardar, se vacía y se reintenta el guardado UNA vez (`_resolver_campo_html`, `_intentar_guardado`).
   - El contenido eliminado queda en la columna Observación del reporte CSV (`_observacion_guardado`, clave `html_vaciado` del resultado).
-  - Si no se puede vaciar: cancela sin guardar → `ERROR_LIMPIANDO_HTML` + copia de la estructura del campo en `temp/<trabajo>/campo_html_fila_<n>.html` y captura, para ajustar el selector. La estructura real del editor Html de PRIZMA no se ha inspeccionado: el selector se validó con réplicas en Chromium.
+  - Si no se puede vaciar: cancela sin guardar → `ERROR_LIMPIANDO_HTML` + copia de la estructura del campo en `temp/<trabajo>/campo_html_fila_<n>.html` y captura, para ajustar el selector. El editor real es un `<textarea class="htmlCodeField-textarea">` y el selector funciona contra PRIZMA (ambiente de pruebas, 2026-10-07).
+- **Formato de los recursos interactivos: H5P o HTML** (decisiones del usuario, 2026-10-06). Se elige en cada cargue (`formato_recurso` en el formulario, el trabajo y el resultado; `FORMATOS_RECURSO_INTERACTIVO`). Solo afecta a las actividades que hoy son H5P (OVA y OVI H5P/infografía): `engine.aplicar_formato_recurso` las convierte a tipo `HTML`; los PDF no cambian. Ojo con los nombres: `tipo_recurso` es el texto de la columna F de la matriz (y los filtros de la tabla); `formato_recurso` es la elección H5P/HTML.
+  - Los `.html`/`.htm` vienen en el ZIP (se indexan como `.html`) y se emparejan por nombre con la actividad, con las mismas reglas que el H5P (ambigüedad = fila no cargable). En formato HTML **no** se valida contra Drive (`create_analyzed_job` no llama a la prevalidación; `resultado["drive"]["modo"] == "html"`).
+  - En PRIZMA (`procesar_actividad`, rama `es_html`): (1) lee el `.html` completo (`leer_archivo_html`) **antes de tocar el formulario**: si no es UTF-8 o está vacío (`ERROR_HTML_NO_ES_UTF8`/`ERROR_HTML_VACIO`) cancela sin quitar nada de "Recurso"; (2) `_resolver_recurso_para_html` quita **cualquier archivo** que haya en "Recurso", sea H5P o no (decisión del usuario, 2026-10-07: PRIZMA a veces solo muestra el nombre genérico "Archivo"; política `PRIZMA_VACIAR_RECURSO_CON_HTML`, `True` hoy; con `False` cancela y reporta `ERROR_RECURSO_Y_HTML`); (3) `_cargar_html_en_formulario` escribe el código con `fill` y **verifica que el campo quedó idéntico** antes de guardar; (4) guarda y confirma el PATCH como siempre. Si PRIZMA avisa del conflicto al guardar, se quita el archivo y se reintenta una vez. **En formato HTML nunca se borra el Html pegado** (cubierto por `tests/test_html_mode.py`, con pruebas de mutación).
+  - Solo se escribe en `textarea`/`input`; con otro tipo de editor se cancela sin guardar (`ERROR_ESCRIBIENDO_HTML: editor no soportado ...`) y se guarda la estructura del campo. Los fallos al quitar el archivo dejan `ERROR_QUITANDO_RECURSO` y `temp/<trabajo>/campo_recurso_fila_<n>.html` (copia del formulario completo).
+  - **Estructura real del formulario** (volcada del ambiente de pruebas el 2026-10-07; ver comentario en `html_field.py`): Html = `<textarea class="htmlCodeField-textarea">`; aviso de conflicto = `<p class="form-error">`; archivo = `<p class="form-label">Recurso (H5P)</p>` (en OVI el título es solo "Recurso") + `div.btnFile > div.fileItem` con el nombre (`div.box-info-file > p`) y dos botones **[descargar, papelera]**; la etiqueta de tipo muestra el MIME (`.octet-stream`), no sirve para saber si es H5P. La papelera abre "¿Estás seguro? / ¿Deseas eliminar este archivo?" con Cancelar / **Eliminar**.
+  - Retiro del archivo (`quitar_archivo_de_recurso`), tenga el nombre que tenga: pulsa el ÚLTIMO botón de la tarjeta (papelera), exige que aparezca la confirmación (si no, se detiene: así nunca se confunde con el botón de descarga), pulsa Eliminar y verifica que la tarjeta desapareció. Selectores validados en Chromium contra el HTML real volcado (OVA y OVI).
+  - Reporte: tipo `HTML` y observación "HTML pegado (N caracteres[, reemplaza el Html previo]) [- se quito el archivo previo de Recurso ("<nombre>")]" (clave `recurso_quitado` del resultado; sin el nombre si PRIZMA no lo muestra).
+  - Validación (2026-10-07, ambiente de pruebas): el 1.er intento falló sin guardar nada (el selector suponía una etiqueta `.H5P`; se rehízo con la estructura real), el 2.º también (PRIZMA mostraba el nombre genérico "Archivo" y la regla de entonces solo quitaba `.h5p`) y el 3.º funcionó; el usuario lo aprobó para producción.
 - Un cargue real **modifica PRIZMA**: no ejecutarlo para "probar" sin autorización explícita.
 
 ## Usuarios
@@ -199,9 +208,10 @@ Todo en `auto_prizma/core/config.py`. Variables de entorno documentadas en `.env
 | `AUTO_PRIZMA_SECRET` | al importar `services/auth` | Clave HMAC de cookies (si falta: `data/secreto_sesion.txt`) |
 | `AUTO_PRIZMA_COOKIE_SECURE` | en cada request | `"1"` fuerza cookie Secure |
 | `AUTO_PRIZMA_MAX_SIMULTANEOS` | al importar | `1` o `2` (otro valor → 2) |
+| `AUTO_PRIZMA_URL_PRIZMA` | al importar | URL de PRIZMA (vacía = producción `https://admin.prizma.site`; pruebas: `https://admin.prizma.solutions`) |
 | `GOOGLE_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` | en cada llamada | OAuth |
 
-Otros parámetros: `PRIZMA_ESPERAS_REINTENTO_SESION` (reintentos de la sesión inicial), `PRIZMA_VACIAR_HTML_CON_H5P` (política temporal del campo Html), `CHROMIUM_ARGS`, `VIEWPORT_NAVEGADOR`, límites de Google/Drive.
+Otros parámetros: `PRIZMA_ESPERAS_REINTENTO_SESION` (reintentos de la sesión inicial), `PRIZMA_VACIAR_HTML_CON_H5P` (política temporal del campo Html en formato H5P), `FORMATOS_RECURSO_INTERACTIVO` / `FORMATO_RECURSO_POR_DEFECTO` / `EXTENSIONES_HTML` / `PRIZMA_VACIAR_RECURSO_CON_HTML` (formato HTML), `CHROMIUM_ARGS`, `VIEWPORT_NAVEGADOR`, límites de Google/Drive.
 
 Reglas: no leer `os.environ` fuera de `config.py`; añadir constantes nuevas (URLs, límites, timeouts) a `config.py` y a `.env.example` si son variables; mantener el "momento de lectura" al mover algo. Los timeouts de Playwright del motor siguen dispersos en `engine.py` (pendiente fase 7).
 
@@ -218,14 +228,14 @@ python scripts/manage_users.py crear
 python -m uvicorn main:app --reload
 ```
 
-URL de desarrollo: `http://127.0.0.1:8000`. `--reload` reinicia el proceso y **pierde los trabajos en memoria**. Producción: `Dockerfile` (`uvicorn main:app --host 0.0.0.0 --port 8000`), desplegado en Railway.
+URL de desarrollo: `http://127.0.0.1:8000`. Para probar contra el ambiente de pruebas de PRIZMA: `$env:AUTO_PRIZMA_URL_PRIZMA = "https://admin.prizma.solutions"` antes de arrancar. `--reload` reinicia el proceso y **pierde los trabajos en memoria**. Producción: `Dockerfile` (`uvicorn main:app --host 0.0.0.0 --port 8000`), desplegado en Railway.
 
 ## Tests
 
 - Framework: **pytest** (`requirements-dev.txt`). `tests/conftest.py` fija `AUTO_PRIZMA_DATA_DIR` en una carpeta temporal y crea el usuario `adminlocal`. PRIZMA y Playwright están simulados (`unittest.mock.patch`).
 
 ```powershell
-python -m pytest -q                                   # todo (≈45 s, 189 pruebas al 2026-10-06)
+python -m pytest -q                                   # todo (≈45 s, 228 pruebas al 2026-10-07)
 python -m pytest tests/test_test_parser.py -q         # un archivo
 python -m pytest tests/test_automation.py -k nombre   # una prueba
 ```
@@ -245,7 +255,7 @@ python -m pytest tests/test_automation.py -k nombre   # una prueba
 
 ## Git
 
-- Rama principal: `main` (PRs). Rama de trabajo del usuario: `Jeremy`. Equipo: Kevin Torres, Luis, danilo0413, JIMENEZ45 (aprueba PRs). Commits en español, con prefijos `fix:`/`refactor:`/`docs:`/`chore:`.
+- Rama principal: `main` (PRs). **Railway despliega cada push a `main`**: lo que llega a `main` llega a producción. Rama de trabajo del usuario: `Jeremy`. Equipo: Kevin Torres, Luis, danilo0413, JIMENEZ45 (aprueba PRs). Commits en español, con prefijos `fix:`/`refactor:`/`docs:`/`chore:`.
 - Antes de cambiar nada:
 
 ```powershell
@@ -322,6 +332,7 @@ git fetch origin; git rev-list --count HEAD..origin/main   # ¿rama atrasada?
 ## Problemas conocidos
 
 - **Monkeypatching del motor** (`engine_overrides.py`) y del botón "Test" (`evaluative_tests/views.py::_patch_main_nav`, vía `sys.modules.get("auto_prizma.api.routes.uploads")`): acople oculto; si se mueve el código parcheado, el parche deja de aplicarse sin error visible.
+- **Sin confirmar: cuándo borra PRIZMA el archivo de "Recurso"** (2026-10-07). Si la papelera lo borra en el servidor al pulsar Eliminar (y no al guardar), un fallo posterior (pegado o guardado) deja la actividad sin archivo y sin HTML aunque el reporte diga "No se guardo nada". Se arregla volviendo a cargarla en formato HTML (ya no habrá archivo que quitar). Para reducir el riesgo, el `.html` se lee y valida antes de quitar nada.
 - **`ERROR_PATCH_NO_CONFIRMADO` en actividades con campo Html** (causa encontrada el 2026-10-06): PRIZMA no envía el guardado si el campo "Html" tiene contenido y se sube un H5P. Ahora se vacía el Html (política temporal, ver PRIZMA). Si vuelve a aparecer `ERROR_PATCH_NO_CONFIRMADO`, el mensaje trae el diagnóstico y la captura `temp/<trabajo>/sin_patch_fila_<n>.png`.
 - **`print()` con caracteres no ASCII en el motor** (`→`, emojis): si la salida estándar no es UTF-8 (Windows con la salida redirigida a archivo/pipe, p. ej. `uvicorn ... > log.txt`), `resolver_recurso` y otras funciones lanzan `UnicodeEncodeError` en pleno cargue. En Railway (Linux) no ocurre. Mitigación local: `$env:PYTHONIOENCODING = "utf-8"`. Corrección pendiente (fase 7: logging en lugar de `print`).
 - **Ruta de datos inconsistente** en `evaluative_tests/state.py`: el usuario PRIZMA recordado se guarda en `<raíz>/data/tokens/` ignorando `AUTO_PRIZMA_DATA_DIR` (en Railway puede no ser persistente). Las pruebas lo confirman: escriben `data/tokens/prizma_adminlocal.json` en el `data/` real (solo `usuario`/`recordar`, sin contraseña). El nombre de archivo usa el usuario sin sanear. Corregirlo cambia dónde se guarda el dato (los usuarios tendrían que reescribir su usuario PRIZMA una vez).
@@ -350,3 +361,4 @@ git fetch origin; git rev-list --count HEAD..origin/main   # ¿rama atrasada?
 - **Un hilo + un Chromium por cargue**, máximo 2 simultáneos; cancelación cooperativa entre actividades.
 - **HTML renderizado en servidor** con CSS común en `/estilos-responsive.css` y tema oscuro.
 - **Hora de Colombia** para historial y nombres de reporte.
+- **Formato HTML reutilizando el flujo del H5P**: solo cambia el paso de carga (pegar en el campo Html en lugar de subir el archivo); emparejamiento, reporte, historial, cancelación y reintentos son los mismos. El código nuevo de bajo nivel vive en `automation/prizma/html_field.py`, sin dependencias del motor.

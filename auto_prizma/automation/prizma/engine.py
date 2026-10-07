@@ -29,10 +29,24 @@ from urllib.error import HTTPError, URLError
 # URL_PRIZMA, CHROMIUM_ARGS y VIEWPORT_NAVEGADOR viven en auto_prizma.core.config.
 from auto_prizma.core.config import (  # noqa: E402
     CHROMIUM_ARGS,
+    EXTENSIONES_HTML,
     PRIZMA_ESPERAS_REINTENTO_SESION,
     PRIZMA_VACIAR_HTML_CON_H5P,
+    PRIZMA_VACIAR_RECURSO_CON_HTML,
+    FORMATO_RECURSO_POR_DEFECTO,
     URL_PRIZMA,
     VIEWPORT_NAVEGADOR,
+)
+from auto_prizma.automation.prizma.html_field import (  # noqa: E402
+    NOMBRE_ARCHIVO_DESCONOCIDO,
+    XPATH_SECCION_RECURSO,
+    archivo_en_recurso,
+    es_campo_de_texto as _es_campo_de_texto,
+    escribir_html_en_editor,
+    guardar_estructura,
+    leer_archivo_html,
+    normalizar_saltos,
+    quitar_archivo_de_recurso,
 )
 
 VERSION_SCRIPT = "PRUEBA_H5P_NUEVO_GESTION_FINANCIERA_V2"
@@ -631,6 +645,29 @@ def determinar_tipo_archivo(
     return None
 
 
+def aplicar_formato_recurso(actividades, formato_recurso):
+    """Aplica el formato de recurso interactivo (H5P/HTML) elegido para el cargue.
+
+    En modo "HTML" las actividades de recurso interactivo (tipo H5P) pasan a
+    tipo "HTML": su codigo se pega en el campo Html. Los PDF no cambian.
+
+    Args:
+        actividades: lista devuelta por leer_actividades_excel (se modifica).
+        formato_recurso: "H5P" o "HTML" (config.FORMATOS_RECURSO_INTERACTIVO).
+
+    Returns:
+        La misma lista de actividades.
+    """
+    if str(formato_recurso or "").strip().upper() != "HTML":
+        return actividades
+
+    for actividad in actividades:
+        if actividad.get("tipo_archivo") == "H5P":
+            actividad["tipo_archivo"] = "HTML"
+
+    return actividades
+
+
 # ============================================================
 # VALIDACIÓN DE CARPETAS DE RECURSOS EN GOOGLE DRIVE
 # ============================================================
@@ -1130,8 +1167,12 @@ def crear_indice_recursos(
             if extension not in [
                 ".h5p",
                 ".pdf",
-            ]:
+            ] + list(EXTENSIONES_HTML):
                 continue
+
+            # .htm se trata igual que .html (mismo tipo de recurso).
+            if extension in EXTENSIONES_HTML:
+                extension = ".html"
 
             indice.append(
                 {
@@ -1384,6 +1425,12 @@ def resolver_recurso(
     ] == "PDF":
 
         extension = ".pdf"
+
+    elif actividad[
+        "tipo_archivo"
+    ] == "HTML":
+
+        extension = ".html"
 
     else:
 
@@ -3914,14 +3961,6 @@ def _localizar_editor_html(pagina):
         return None
 
 
-def _es_campo_de_texto(editor):
-    try:
-        etiqueta = editor.evaluate("e => e.tagName.toLowerCase()")
-    except Exception:
-        return False
-    return etiqueta in ("textarea", "input")
-
-
 def _texto_editor_html(editor):
     """Contenido actual del editor Html ("" si no se puede leer)."""
     if editor is None:
@@ -3967,26 +4006,15 @@ def _vaciar_editor_html(pagina, editor, aviso_inicial, timeout_ms=3000, interval
 def _guardar_estructura_campo_html(pagina, carpeta_temp, actividad):
     """Guarda el HTML de la seccion "Html" del formulario para ajustar el motor.
 
-    Solo se usa cuando no se pudo vaciar el campo. Queda en temp/ (no se versiona).
+    Solo se usa cuando algo falla. Queda en temp/ (no se versiona).
     """
-    try:
-        if not carpeta_temp:
-            return ""
-        seccion = pagina.locator(_XPATH_SECCION_HTML)
-        if seccion.count() == 0:
-            return ""
-        contenido = seccion.first.evaluate("e => e.outerHTML") or ""
-        os.makedirs(carpeta_temp, exist_ok=True)
-        fila = str((actividad or {}).get("fila_excel") or "x")
-        ruta = os.path.join(carpeta_temp, "campo_html_fila_" + fila + ".html")
-        with open(ruta, "w", encoding="utf-8") as archivo:
-            archivo.write(contenido[:200000])
-        try:
-            return os.path.relpath(ruta)
-        except ValueError:
-            return ruta
-    except Exception:
-        return ""
+    fila = str((actividad or {}).get("fila_excel") or "x")
+    return guardar_estructura(
+        pagina,
+        _XPATH_SECCION_HTML,
+        carpeta_temp,
+        "campo_html_fila_" + fila + ".html",
+    )
 
 
 def _resolver_campo_html(pagina, carpeta_temp, actividad, nombre_recurso):
@@ -4038,6 +4066,136 @@ def _resolver_campo_html(pagina, carpeta_temp, actividad, nombre_recurso):
         "error": error,
         "recurso": nombre_recurso,
     }, None
+
+
+ERROR_RECURSO_Y_HTML = (
+    "ERROR_RECURSO_Y_HTML: la actividad tiene un archivo en Recurso y PRIZMA no "
+    "permite archivo y Html a la vez. No se guardo nada; quita el archivo en "
+    "PRIZMA y vuelve a cargar esta actividad."
+)
+
+ERROR_QUITANDO_RECURSO = (
+    "ERROR_QUITANDO_RECURSO: la actividad tiene un archivo en Recurso y no se "
+    "pudo quitar automaticamente. No se guardo nada; quitalo en PRIZMA y vuelve "
+    "a cargar esta actividad."
+)
+
+
+def _esperar_sin_conflicto_html_h5p(pagina, timeout_ms=3000, intervalo_ms=200):
+    """Espera a que PRIZMA deje de mostrar el aviso de conflicto Html/H5P."""
+    transcurrido = 0
+    while True:
+        if not _conflicto_html_h5p_visible(pagina):
+            return True
+        if transcurrido >= timeout_ms:
+            return False
+        pagina.wait_for_timeout(intervalo_ms)
+        transcurrido += intervalo_ms
+
+
+def _resolver_recurso_para_html(pagina, carpeta_temp, actividad, nombre_recurso):
+    """Modo HTML: deja el campo "Recurso" sin archivo para poder guardar el Html.
+
+    PRIZMA no permite un archivo en "Recurso" y Html a la vez. Se actua si hay
+    un archivo en "Recurso" o si PRIZMA muestra el aviso de conflicto. Se
+    quita cualquier archivo, sea H5P o no (decision del usuario, 2026-10-07),
+    si PRIZMA_VACIAR_RECURSO_CON_HTML lo permite. Nunca toca el campo Html.
+
+    Returns:
+        (resultado_error, archivo_quitado):
+          - (None, ""): no habia archivo ni aviso; no se toco nada.
+          - (None, nombre): se quito ese archivo (queda en el reporte).
+          - (dict, ""): no se puede guardar; la edicion ya quedo cancelada.
+    """
+    aviso = _conflicto_html_h5p_visible(pagina)
+    archivo = archivo_en_recurso(pagina)
+
+    if not aviso and not archivo:
+        return None, ""
+
+    if not PRIZMA_VACIAR_RECURSO_CON_HTML:
+        print("La actividad tiene un archivo en Recurso y la politica no permite quitarlo: no se guarda.")
+        cancelar_edicion_segura(pagina)
+        return {
+            "ok": False,
+            "error": ERROR_RECURSO_Y_HTML,
+            "recurso": nombre_recurso,
+        }, ""
+
+    if archivo:
+        print("La actividad tiene un archivo en Recurso (" + archivo + "); se quita para poder guardar el HTML.")
+        quitado, motivo = quitar_archivo_de_recurso(pagina)
+    else:
+        quitado, motivo = False, "PRIZMA avisa del conflicto Html/H5P pero no se ve ningun archivo en Recurso"
+
+    if quitado and (not aviso or _esperar_sin_conflicto_html_h5p(pagina)):
+        print("Archivo quitado de Recurso:", archivo)
+        return None, archivo
+
+    error = ERROR_QUITANDO_RECURSO + " (" + (motivo or "PRIZMA sigue mostrando el aviso Html/H5P") + ")"
+    fila = str((actividad or {}).get("fila_excel") or "x")
+    ruta_estructura = guardar_estructura(
+        pagina,
+        XPATH_SECCION_RECURSO,
+        carpeta_temp,
+        "campo_recurso_fila_" + fila + ".html",
+    )
+    if ruta_estructura:
+        error += "; estructura: " + ruta_estructura
+    ruta_captura = _guardar_captura_diagnostico(pagina, carpeta_temp, actividad)
+    if ruta_captura:
+        error += "; captura: " + ruta_captura
+    print(error)
+
+    cancelar_edicion_segura(pagina)
+    return {
+        "ok": False,
+        "error": error,
+        "recurso": nombre_recurso,
+    }, ""
+
+
+def _cargar_html_en_formulario(pagina, contenido, carpeta_temp, actividad, nombre_recurso):
+    """Modo HTML: pega el codigo completo del archivo en el campo "Html".
+
+    contenido es el codigo ya leido con leer_archivo_html. Verifica que el
+    campo quedo identico al archivo antes de guardar. Ante cualquier
+    problema cancela la edicion sin guardar.
+
+    Returns:
+        (resultado_error, html_pegado): resultado_error es None si se puede
+        guardar; html_pegado = {"caracteres": n, "reemplazo_previo": bool}.
+    """
+    editor = _localizar_editor_html(pagina)
+    texto_previo = ""
+    if editor is None:
+        escrito, motivo = False, "no se encontro el campo Html del formulario"
+    else:
+        texto_previo = _texto_editor_html(editor)
+        escrito, motivo = escribir_html_en_editor(editor, contenido)
+
+    if not escrito:
+        error = "ERROR_ESCRIBIENDO_HTML: " + motivo + ". No se guardo nada"
+        ruta_estructura = _guardar_estructura_campo_html(pagina, carpeta_temp, actividad)
+        if ruta_estructura:
+            error += "; estructura: " + ruta_estructura
+        ruta_captura = _guardar_captura_diagnostico(pagina, carpeta_temp, actividad)
+        if ruta_captura:
+            error += "; captura: " + ruta_captura
+        print(error)
+        cancelar_edicion_segura(pagina)
+        return {
+            "ok": False,
+            "error": error,
+            "recurso": nombre_recurso,
+        }, None
+
+    caracteres = len(normalizar_saltos(contenido))
+    print("HTML pegado y verificado:", caracteres, "caracteres.")
+    return None, {
+        "caracteres": caracteres,
+        "reemplazo_previo": bool(texto_previo.strip()),
+    }
 
 
 def _intentar_guardado(pagina, boton_guardar, respuestas, captura):
@@ -4536,6 +4694,97 @@ def iniciar_sesion_prizma(
 # PROCESAR ACTIVIDAD
 # ============================================================
 
+def _cargar_archivo_en_recurso(
+    pagina,
+    campo_recurso,
+    ruta_recurso,
+    nombre_recurso,
+    carpeta_temp,
+    actividad,
+):
+    """Pasos 8-9b del modo archivo (H5P/PDF) de procesar_actividad.
+
+    Sube el archivo al campo "Recurso", espera a que PRIZMA lo muestre y
+    aplica la politica del campo Html (PRIZMA_VACIAR_HTML_CON_H5P).
+
+    Returns:
+        (resultado_error, html_vaciado): resultado_error es None si se puede
+        guardar; html_vaciado es el texto previo del Html si se vacio.
+    """
+
+    # 8. CARGAR
+
+    print()
+    print(
+        "Cargando:",
+        nombre_recurso,
+    )
+
+    try:
+
+        campo_recurso.set_input_files(
+            ruta_recurso
+        )
+
+    except Exception:
+
+        cancelar_edicion_segura(
+            pagina
+        )
+
+        return {
+            "ok": False,
+            "error":
+                "ERROR_SET_INPUT_FILES",
+            "recurso":
+                nombre_recurso,
+        }, None
+
+    # 9. VISIBLE - espera adaptativa; si PRIZMA responde rapido no pagamos
+    # los 2.2 segundos fijos de la version anterior.
+    if not _esperar_archivo_visible(
+        pagina,
+        nombre_recurso,
+        timeout_ms=2200,
+    ):
+
+        cancelar_edicion_segura(
+            pagina
+        )
+
+        return {
+            "ok": False,
+            "error":
+                "ERROR_RECURSO_NO_VISIBLE",
+            "recurso":
+                nombre_recurso,
+        }, None
+
+    print(
+        "✅ Recurso visible."
+    )
+
+    # 9b. CAMPO HTML / H5P: PRIZMA no permite guardar un H5P si el campo
+    # Html tiene contenido. Politica temporal (PRIZMA_VACIAR_HTML_CON_H5P):
+    # se vacia el Html antes de guardar y el contenido previo va al reporte.
+    html_vaciado = None
+
+    if (
+        str(actividad.get("tipo_archivo") or "").upper() == "H5P"
+        or _conflicto_html_h5p_visible(pagina)
+    ):
+        error_html, html_vaciado = _resolver_campo_html(
+            pagina,
+            carpeta_temp,
+            actividad,
+            nombre_recurso,
+        )
+        if error_html:
+            return error_html, None
+
+    return None, html_vaciado
+
+
 def procesar_actividad(
     pagina,
     actividad,
@@ -4610,6 +4859,9 @@ def procesar_actividad(
     nombre_recurso = recurso[
         "nombre_original"
     ]
+
+    # Modo HTML: el codigo del archivo va al campo "Html" (no al campo "Recurso").
+    es_html = str(actividad.get("tipo_archivo") or "").upper() == "HTML"
 
     # 2. LISTADO
 
@@ -4760,6 +5012,14 @@ def procesar_actividad(
             "✅ El PDF será cargado en CONTENIDO."
         )
 
+    elif es_html:
+
+        # El HTML se pega en el campo "Html"; no se usa el campo de archivo.
+        campo_recurso = None
+
+        print()
+        print("El codigo HTML se pegara en el campo Html.")
+
     else:
 
         campo_recurso = detectar_campo_recurso(
@@ -4809,75 +5069,53 @@ def procesar_actividad(
                 nombre_recurso,
         }
 
-    # 8. CARGAR
-
-    print()
-    print(
-        "Cargando:",
-        nombre_recurso,
-    )
-
-    try:
-
-        campo_recurso.set_input_files(
-            ruta_recurso
-        )
-
-    except Exception:
-
-        cancelar_edicion_segura(
-            pagina
-        )
-
-        return {
-            "ok": False,
-            "error":
-                "ERROR_SET_INPUT_FILES",
-            "recurso":
-                nombre_recurso,
-        }
-
-    # 9. VISIBLE - espera adaptativa; si PRIZMA responde rapido no pagamos
-    # los 2.2 segundos fijos de la version anterior.
-    if not _esperar_archivo_visible(
-        pagina,
-        nombre_recurso,
-        timeout_ms=2200,
-    ):
-
-        cancelar_edicion_segura(
-            pagina
-        )
-
-        return {
-            "ok": False,
-            "error":
-                "ERROR_RECURSO_NO_VISIBLE",
-            "recurso":
-                nombre_recurso,
-        }
-
-    print(
-        "✅ Recurso visible."
-    )
-
-    # 9b. CAMPO HTML / H5P: PRIZMA no permite guardar un H5P si el campo
-    # Html tiene contenido. Politica temporal (PRIZMA_VACIAR_HTML_CON_H5P):
-    # se vacia el Html antes de guardar y el contenido previo va al reporte.
+    # 8-9. CARGAR EL RECURSO
     html_vaciado = None
+    html_pegado = None
+    recurso_quitado = ""
 
-    if (
-        str(actividad.get("tipo_archivo") or "").upper() == "H5P"
-        or _conflicto_html_h5p_visible(pagina)
-    ):
-        error_html, html_vaciado = _resolver_campo_html(
+    if es_html:
+        # Modo HTML: leer el .html ANTES de tocar el formulario (si no sirve,
+        # no se quita nada de "Recurso"), quitar el archivo previo de
+        # "Recurso" (si lo hay) y pegar el codigo en el campo Html,
+        # verificando que quedo identico.
+        contenido_html, error_lectura = leer_archivo_html(ruta_recurso)
+        if error_lectura:
+            cancelar_edicion_segura(pagina)
+            return {
+                "ok": False,
+                "error": error_lectura,
+                "recurso": nombre_recurso,
+            }
+
+        error_recurso, recurso_quitado = _resolver_recurso_para_html(
             pagina,
             carpeta_temp,
             actividad,
             nombre_recurso,
         )
-        if error_html:
-            return error_html
+        if error_recurso:
+            return error_recurso
+
+        error_carga, html_pegado = _cargar_html_en_formulario(
+            pagina,
+            contenido_html,
+            carpeta_temp,
+            actividad,
+            nombre_recurso,
+        )
+    else:
+        error_carga, html_vaciado = _cargar_archivo_en_recurso(
+            pagina,
+            campo_recurso,
+            ruta_recurso,
+            nombre_recurso,
+            carpeta_temp,
+            actividad,
+        )
+
+    if error_carga:
+        return error_carga
 
     # 10. GUARDAR
 
@@ -4914,17 +5152,31 @@ def procesar_actividad(
         and respuesta_patch is None
         and _conflicto_html_h5p_visible(pagina)
     ):
-        error_html, texto_vaciado = _resolver_campo_html(
-            pagina,
-            carpeta_temp,
-            actividad,
-            nombre_recurso,
-        )
-        if error_html:
-            return error_html
+        if es_html:
+            # Modo HTML: el aviso indica que sigue habiendo un archivo en
+            # "Recurso". Nunca se borra el Html que se acaba de pegar.
+            error_conflicto, quitado = _resolver_recurso_para_html(
+                pagina,
+                carpeta_temp,
+                actividad,
+                nombre_recurso,
+            )
+            if error_conflicto:
+                return error_conflicto
 
-        if texto_vaciado is not None:
-            html_vaciado = texto_vaciado
+            recurso_quitado = recurso_quitado or quitado
+        else:
+            error_html, texto_vaciado = _resolver_campo_html(
+                pagina,
+                carpeta_temp,
+                actividad,
+                nombre_recurso,
+            )
+            if error_html:
+                return error_html
+
+            if texto_vaciado is not None:
+                html_vaciado = texto_vaciado
 
         boton_guardar = encontrar_boton_guardar(
             pagina
@@ -4940,7 +5192,7 @@ def procesar_actividad(
                 "recurso": nombre_recurso,
             }
 
-        print("Reintentando el guardado con el campo Html vacio...")
+        print("Reintentando el guardado tras resolver el conflicto Html/H5P...")
 
         respuesta_patch, detalle_clic, error_clic_guardar = _intentar_guardado(
             pagina,
@@ -4959,7 +5211,7 @@ def procesar_actividad(
             )
             return {
                 "ok": False,
-                "error": ERROR_LIMPIANDO_HTML,
+                "error": ERROR_QUITANDO_RECURSO if es_html else ERROR_LIMPIANDO_HTML,
                 "recurso": nombre_recurso,
             }
 
@@ -4977,7 +5229,10 @@ def procesar_actividad(
         return {
             "ok": False,
             "error":
-                "ERROR_CLIC_GUARDAR",
+                "ERROR_CLIC_GUARDAR: "
+                + type(error_clic_guardar).__name__
+                + ": "
+                + (str(error_clic_guardar).strip().splitlines() or [""])[0][:200],
             "recurso":
                 nombre_recurso,
         }
@@ -5014,6 +5269,8 @@ def procesar_actividad(
                 "error": "",
                 "recurso": nombre_recurso,
                 "html_vaciado": html_vaciado,
+                "html_pegado": html_pegado,
+                "recurso_quitado": recurso_quitado,
                 "confirmacion": "REAPERTURA",
             }
 
@@ -5076,6 +5333,8 @@ def procesar_actividad(
         "recurso":
             nombre_recurso,
         "html_vaciado": html_vaciado,
+        "html_pegado": html_pegado,
+        "recurso_quitado": recurso_quitado,
         "confirmacion": "PATCH",
     }
 
@@ -5095,6 +5354,21 @@ def _observacion_guardado(resultado):
             + (previo[:300] if previo else "no legible")
             + "\")"
         )
+
+    # Modo HTML: tamano del codigo pegado y archivo previo quitado de "Recurso".
+    html_pegado = (resultado or {}).get("html_pegado")
+    if html_pegado:
+        observacion += (
+            " - HTML pegado (" + str(html_pegado.get("caracteres", 0)) + " caracteres"
+            + (", reemplaza el Html previo" if html_pegado.get("reemplazo_previo") else "")
+            + ")"
+        )
+
+    recurso_quitado = (resultado or {}).get("recurso_quitado")
+    if recurso_quitado:
+        observacion += " - se quito el archivo previo de Recurso"
+        if recurso_quitado != NOMBRE_ARCHIVO_DESCONOCIDO:
+            observacion += " (\"" + str(recurso_quitado) + "\")"
 
     return observacion
 
@@ -5149,7 +5423,7 @@ def _registrar_fallo_prizma(request, captura):
 
 
 # Alertas/toasts de PRIZMA (MUI) y errores de validacion de los campos.
-_SELECTORES_ALERTAS_PRIZMA = '[role="alert"], .MuiFormHelperText-root.Mui-error'
+_SELECTORES_ALERTAS_PRIZMA = '[role="alert"], .MuiFormHelperText-root.Mui-error, p.form-error'
 
 
 def _ruta_sin_dominio(url):
@@ -5418,6 +5692,7 @@ def ejecutar_cargue(
     contrasena_prizma,
     estado,
     seleccion_actividades=None,
+    formato_recurso=FORMATO_RECURSO_POR_DEFECTO,
 ):
     navegador = None
 
@@ -5451,6 +5726,9 @@ def ejecutar_cargue(
             procesar_retos,
         )
 
+        # Modo HTML: las actividades H5P pasan a HTML (los PDF no cambian).
+        actividades = aplicar_formato_recurso(actividades, formato_recurso)
+
         actividades = filtrar_actividades_seleccionadas(
             actividades,
             seleccion_actividades,
@@ -5473,7 +5751,11 @@ def ejecutar_cargue(
             actualizar_estado(
                 estado,
                 etapa="error",
-                mensaje="No se encontraron archivos H5P/PDF dentro del ZIP.",
+                mensaje=(
+                    "No se encontraron archivos "
+                    + ("HTML" if str(formato_recurso or "").upper() == "HTML" else "H5P")
+                    + "/PDF dentro del ZIP."
+                ),
                 terminado=True,
             )
             return
