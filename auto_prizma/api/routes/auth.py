@@ -13,6 +13,8 @@ from fastapi.responses import (
 import html
 
 from auto_prizma.core.application import app
+from auto_prizma.web.icons import icon
+from auto_prizma.web.layout import render_page, render_public_page
 from auto_prizma.services.auth import (
     SESION_COOKIE,
     SESION_HORAS,
@@ -45,45 +47,23 @@ RUTAS_PUBLICAS = {
     "/salir",
     "/favicon.ico",
     "/auto-prizma-logo.png",
-    "/estilos-responsive.css",
-    "/tema.js",
+    "/app.css",
+    "/app.js",
 }
 
 
+_CSS_LOGIN = """
+.marca-login { display: flex; align-items: center; gap: 12px; margin: 0 0 26px; }
+.marca-login img { width: 46px; height: 46px; object-fit: contain; }
+"""
+
+
 def _pagina_login(error="", usuario_previo=""):
-    plantilla = r"""<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Ingresar - Cargue Prizma Pro</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:#f7f8fc;
-color:#101828;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-.caja{background:#fff;border:1px solid #e4e7ec;border-radius:18px;padding:36px 32px;
-width:100%;max-width:400px;box-shadow:0 12px 40px rgba(16,24,40,.07)}
-.marca{display:flex;align-items:center;gap:12px;margin-bottom:26px}
-.logo{width:42px;height:42px;border-radius:12px;background:#1570ef;display:flex;
-align-items:center;justify-content:center}
-.logo svg{width:26px;height:26px;fill:#fff}
-.marca strong{display:block;font-size:16px}
-.marca span{font-size:12px;color:#667085}
-h1{font-size:20px;margin-bottom:6px}
-.sub{font-size:13px;color:#667085;margin-bottom:22px}
-label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
-input{width:100%;padding:11px 13px;border:1px solid #d0d5dd;border-radius:10px;
-font-size:14px;margin-bottom:16px;font-family:inherit}
-input:focus{outline:none;border-color:#1570ef;box-shadow:0 0 0 3px rgba(21,112,239,.12)}
-button{width:100%;padding:12px;background:#1570ef;color:#fff;border:none;
-border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit}
-button:hover{background:#1059c4}
-.error{background:#fef3f2;border:1px solid #fecdca;color:#b42318;padding:11px 13px;
-border-radius:10px;font-size:13px;margin-bottom:18px}
-.pie{margin-top:20px;font-size:12px;color:#98a2b3;text-align:center;line-height:1.6}
-</style><link rel="stylesheet" href="/estilos-responsive.css"><script src="/tema.js" defer></script></head><body>
-<form class="caja" method="post" action="/login">
-  <div class="marca">
-    <div class="logo"><img class="logo-imagen" src="/auto-prizma-logo.png" alt="Logo Cargue Prizma Pro"></div>
-    <div><strong>Cargue Prizma Pro</strong><span>Cargue Prizma</span></div>
+    plantilla = """
+<form class="panel tarjeta-formulario" method="post" action="/login">
+  <div class="marca-login">
+    <img src="/auto-prizma-logo.png" alt="" width="46" height="46">
+    <span class="marca-texto"><strong>Cargue Prizma Pro</strong><small>Cargue Prizma</small></span>
   </div>
   <h1>Ingresar</h1>
   <p class="sub">Usa el usuario que te entregaron.</p>
@@ -91,24 +71,28 @@ border-radius:10px;font-size:13px;margin-bottom:18px}
   <label for="usuario">Usuario</label>
   <input id="usuario" name="usuario" autocomplete="username" required
          value="__USUARIO__" autofocus>
-  <label for="contrasena">Contrasena</label>
+  <label for="contrasena">Contraseña</label>
   <input id="contrasena" name="contrasena" type="password"
          autocomplete="current-password" required>
-  <button type="submit">Entrar</button>
-  <p class="pie">Cada persona ve unicamente sus propios cargues,<br>su historial y sus reportes.</p>
-</form></body></html>"""
+  <button class="boton" type="submit">Entrar</button>
+  <p class="pie">Cada persona ve únicamente sus propios cargues,<br>su historial y sus reportes.</p>
+</form>"""
 
     bloque_error = ""
     if error:
-        bloque_error = '<div class="error">' + html.escape(str(error)) + "</div>"
+        bloque_error = (
+            '<div class="aviso error" role="alert">' + icon("alerta-circulo")
+            + "<div><strong>" + html.escape(str(error)) + "</strong></div></div>"
+        )
 
-    return plantilla.replace(
+    contenido = plantilla.replace(
         "__ERROR__",
         bloque_error,
     ).replace(
         "__USUARIO__",
         html.escape(str(usuario_previo or ""), quote=True),
     )
+    return render_public_page("Ingresar", contenido, page_css=_CSS_LOGIN)
 
 
 @app.middleware("http")
@@ -221,57 +205,44 @@ def cerrar_sesion():
 
 @app.get("/cambiar-clave", response_class=HTMLResponse)
 def cambiar_clave_formulario(mensaje: str = "", error: str = ""):
-    plantilla = r"""<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Cambiar contrasena - Cargue Prizma Pro</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:#f7f8fc;color:#101828;
-min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
-.caja{background:#fff;border:1px solid #e4e7ec;border-radius:18px;padding:34px 32px;
-width:100%;max-width:400px;box-shadow:0 12px 40px rgba(16,24,40,.07)}
-h1{font-size:19px;margin-bottom:6px}
-.sub{font-size:13px;color:#667085;margin-bottom:20px}
-label{display:block;font-size:13px;font-weight:600;margin-bottom:6px}
-input{width:100%;padding:11px 13px;border:1px solid #d0d5dd;border-radius:10px;
-font-size:14px;margin-bottom:16px;font-family:inherit}
-button{width:100%;padding:12px;background:#1570ef;color:#fff;border:none;
-border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;font-family:inherit}
-.error{background:#fef3f2;border:1px solid #fecdca;color:#b42318;padding:11px;
-border-radius:10px;font-size:13px;margin-bottom:16px}
-.ok{background:#ecfdf3;border:1px solid #abefc6;color:#067647;padding:11px;
-border-radius:10px;font-size:13px;margin-bottom:16px}
-.volver{display:block;text-align:center;margin-top:16px;font-size:13px;color:#667085}
-</style><link rel="stylesheet" href="/estilos-responsive.css"><script src="/tema.js" defer></script></head><body>
-<form class="caja" method="post" action="/cambiar-clave">
-  <h1>Cambiar contrasena</h1>
-  <p class="sub">Sesion de <strong>__USUARIO__</strong></p>
+    plantilla = """
+<header class="encabezado"><div class="encabezado-titulo">
+  <span class="icono-tile grande">__ICONO__</span>
+  <div><h1>Mi contraseña</h1><p>Sesión de <strong>__USUARIO__</strong></p></div>
+</div></header>
+<form class="panel tarjeta-formulario" method="post" action="/cambiar-clave">
   __AVISO__
-  <label>Contrasena actual</label>
-  <input name="actual" type="password" autocomplete="current-password" required>
-  <label>Nueva contrasena</label>
-  <input name="nueva" type="password" autocomplete="new-password" required
+  <label for="clave-actual">Contraseña actual</label>
+  <input id="clave-actual" name="actual" type="password" autocomplete="current-password" required>
+  <label for="clave-nueva">Nueva contraseña</label>
+  <input id="clave-nueva" name="nueva" type="password" autocomplete="new-password" required
          minlength="8">
-  <label>Repite la nueva</label>
-  <input name="repetir" type="password" autocomplete="new-password" required
+  <label for="clave-repetir">Repite la nueva</label>
+  <input id="clave-repetir" name="repetir" type="password" autocomplete="new-password" required
          minlength="8">
-  <button type="submit">Guardar</button>
-  <a class="volver" href="/">Volver al inicio</a>
-</form></body></html>"""
+  <button class="boton" type="submit">Guardar</button>
+  <p class="pie">Mínimo 8 caracteres.</p>
+</form>"""
 
     aviso = ""
     if error:
-        aviso = '<div class="error">' + html.escape(str(error)) + "</div>"
+        aviso = (
+            '<div class="aviso error" role="alert">' + icon("alerta-circulo")
+            + "<div><strong>" + html.escape(str(error)) + "</strong></div></div>"
+        )
     elif mensaje:
-        aviso = '<div class="ok">' + html.escape(str(mensaje)) + "</div>"
+        aviso = (
+            '<div class="aviso ok" role="status">' + icon("check-circulo")
+            + "<div><strong>" + html.escape(str(mensaje)) + "</strong></div></div>"
+        )
 
-    return HTMLResponse(
-        plantilla.replace(
-            "__USUARIO__",
-            html.escape(_nombre_visible(_usuario_actual())),
-        ).replace("__AVISO__", aviso)
+    contenido = (
+        plantilla
+        .replace("__ICONO__", icon("clave"))
+        .replace("__USUARIO__", html.escape(_nombre_visible(_usuario_actual())))
+        .replace("__AVISO__", aviso)
     )
+    return HTMLResponse(render_page("Mi contraseña", contenido, active="clave"))
 
 
 @app.post("/cambiar-clave", response_class=HTMLResponse)

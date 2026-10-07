@@ -219,6 +219,17 @@ def _google_conectado(usuario=None):
     )
 
 
+def google_token_exists(usuario=None):
+    """True si el usuario tiene un token de Google guardado.
+
+    Comprobacion barata (no lo valida ni lo refresca) para mostrar opciones
+    del menu en cada pagina; para saber si la conexion funciona se usa
+    _google_conectado().
+    """
+    usuario = usuario or _usuario_actual()
+    return bool(usuario) and os.path.isfile(_ruta_token_google(usuario))
+
+
 def _descargar_google_docx_para_tests(url_google_doc, usuario=None):
     """Exporta un Google Doc privado como DOCX para el parser de tests."""
     match = re.search(r"/document/d/([a-zA-Z0-9_-]+)", str(url_google_doc or ""))

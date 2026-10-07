@@ -90,12 +90,13 @@ auto_prizma/                  Código de la aplicación
     storage.py                Lectura y escritura atómica de archivos de datos (JSON y texto)
     clock.py                  Hora de Colombia para historial, reportes y estados
   api/routes/                 Rutas web (cada módulo registra sus rutas sobre la app)
-    static_files.py           Logo, estilos y script de tema
+    static_files.py           Logo y recursos comunes de la interfaz (/app.css y /app.js)
     auth.py                   Middleware de sesión, login, salir y cambio de contraseña
     google.py                 Conectar / desconectar Google
     analysis.py               Inicio y análisis previo al cargue
     uploads.py                Iniciar, seguir, cancelar y estado de cargues
     reports.py                Historial, reportes guardados y descargas
+    health.py                 Estado del servicio en JSON (Chromium y PRIZMA)
   services/                   Lógica de negocio
     auth.py                   Usuarios, contraseñas, bloqueo por intentos y cookies de sesión
     matrix_analysis.py        Lectura de la matriz (CSV/Excel/Sheets) y análisis de matriz y ZIP
@@ -103,9 +104,11 @@ auto_prizma/                  Código de la aplicación
     upload_jobs.py            Estado de cargues, cola de ejecución y servicios que usan las rutas
                               (crear, iniciar, cancelar y consultar trabajos)
     history.py                Historial de cargues y reportes CSV (por usuario)
+    health.py                 Comprueba que Chromium esté instalado y que PRIZMA responda
   integrations/google/        Integración con Google
     oauth.py                  Conexión OAuth con Google por usuario
-    drive.py                  Lectura de enlaces en Google Sheets y listado de carpetas de Drive
+    drive.py                  Lectura de enlaces en Google Sheets, listado de carpetas de Drive y
+                              comprobación del enlace de la matriz al pegarlo
   automation/prizma/          Automatización de PRIZMA con Playwright
     engine.py                 Motor de cargue: lectura de la matriz y automatización de PRIZMA
     engine_overrides.py       Ajustes que se aplican sobre el motor al arrancar
@@ -114,7 +117,10 @@ auto_prizma/                  Código de la aplicación
     drive_resource_policy.py  Reglas para decidir qué recurso de Drive corresponde a cada actividad
     file_names.py             Nombre base y clave exacta de nombres de archivo
   web/
-    views.py                  HTML de la página principal de análisis y cargue
+    layout.py                 Marco común de todas las páginas: menú lateral, estado del servicio,
+                              tema claro/oscuro y menú del usuario
+    icons.py                  Íconos SVG de la interfaz
+    views.py                  Página de Inicio (análisis) y revisión antes del cargue
   evaluative_tests/           Módulo de tests evaluativos (cuestionarios en PRIZMA a partir de un .docx)
     models.py                 Estructuras de datos del documento (tests, secciones, preguntas)
     parser.py                 Lectura del .docx y conversión a esas estructuras
@@ -128,7 +134,7 @@ auto_prizma/                  Código de la aplicación
 scripts/
   manage_users.py             Herramienta de consola para administrar usuarios
   check_prizma_connection.py  Prueba manual de conexión con PRIZMA (navegador visible)
-static/                       Archivos estáticos (logo)
+static/                       Logo, app.css (estilos comunes) y app.js (comportamiento común de la interfaz)
 .env.example                  Variables de entorno soportadas (sin valores)
 tests/                      Pruebas automáticas (pytest)
 uploads/ temp/ resultados/  Archivos de trabajo generados en ejecución (no se versionan)
@@ -153,6 +159,9 @@ Dockerfile                  Imagen para despliegue
 | `GET /historial`, `GET /reportes` | Historial de cargues y reportes generados |
 | `GET /reporte/{trabajo_id}`, `GET /reporte-guardado/{registro_id}` | Ver o descargar un reporte |
 | `GET /google/conectar`, `GET /google/callback`, `POST /google/desconectar` | Conexión de la cuenta de Google |
+| `GET /google/validar-matriz?url=...` | Comprueba el enlace de Google Sheets al pegarlo en Inicio (JSON) |
+| `GET /estado-servicio` | Estado de Chromium y de PRIZMA (JSON; lo consultan todas las páginas) |
+| `GET /app.css`, `GET /app.js` | Estilos y script comunes de la interfaz (públicos) |
 | `GET /tests` y `/tests/...` | Módulo de tests evaluativos |
 
 ---
@@ -269,12 +278,14 @@ Las filas sin nombre o sin categoría se omiten.
 
 ### Pasos en la aplicación
 
-1. **Matriz:** elegir *Por link* (pegar el enlace de Google Sheets; requiere Google conectado) o *Por archivo* (subir `.xlsx` o `.csv`; no requiere Google).
+1. **Matriz:** elegir *Por link* (pegar el enlace de Google Sheets; requiere Google conectado) o *Por archivo* (subir `.xlsx` o `.csv`; no requiere Google). Al pegar el enlace, la app comprueba con tu cuenta de Google que la hoja y la pestaña existan y se puedan leer, y muestra *Enlace válido* o el motivo del problema.
 2. **Recursos:** subir el ZIP con los archivos H5P (o HTML) y PDF de las actividades.
 3. **Categorías:** marcar OVI, OVA, Retos evaluativos y/o Test evaluativo, y elegir el **formato de los recursos interactivos**: *H5P* o *HTML* (ver abajo).
 4. **Analizar:** revisar las actividades encontradas, el recurso asignado a cada una y las advertencias.
 5. **Iniciar:** seleccionar las actividades, ingresar usuario y contraseña de PRIZMA e iniciar. Si ya hay 2 cargues en curso, el nuevo espera en cola.
 6. **Seguimiento:** ver el avance en *Cargue actual*; se puede cancelar en cualquier momento.
+
+Arriba a la derecha están el botón de tema claro/oscuro y el menú del usuario (*Mi contraseña*, *Desconectar Google*, *Salir*). Los indicadores de Inicio y la tarjeta del menú lateral muestran el estado real: *Chromium activo* si el navegador de Playwright está instalado y *Servicio estable* si PRIZMA responde (se comprueba cada pocos minutos). *Ver guía* abre los pasos y consejos. En *Reportes* se puede buscar, filtrar por programa, curso y fecha, ordenar columnas y copiar el enlace de un reporte; en el detalle, buscar en la tabla y copiar la observación de una fila.
 
 ### Formato H5P o HTML
 
@@ -403,7 +414,7 @@ Para probar manualmente la conexión con PRIZMA (abre un navegador visible y esp
 ## Notas para mantenimiento
 
 - **Orden de arranque (`main.py`):** primero se importa `auto_prizma.automation.prizma.engine_overrides`, que reemplaza en memoria algunas funciones del motor (`auto_prizma/automation/prizma/engine.py`) (`leer_actividades_excel`, `resolver_recurso`, `validar_carpeta_drive_para_actividad`), y luego se registran las rutas. Al modificar esas funciones hay que revisar ambos archivos.
-- **Botón "Test" en Cargue actual:** lo agrega `auto_prizma/evaluative_tests/views.py` (`_patch_main_nav`) en memoria sobre `auto_prizma/api/routes/uploads.py`.
+- **Páginas nuevas:** se arman con `render_page(...)` de `auto_prizma/web/layout.py` (menú, tema y usuario ya incluidos); los colores son variables de `static/app.css`, así el tema oscuro funciona sin reglas extra.
 - **Equivalencias de programas:** si PRIZMA usa un nombre de programa distinto al de la matriz, se agrega explícitamente en `EQUIVALENCIAS_PROGRAMAS` (`auto_prizma/automation/prizma/engine.py`). No se usa coincidencia aproximada a propósito.
 - **Límite de navegadores:** el máximo de 2 cargues simultáneos está fijado en `auto_prizma/core/config.py` para no saturar el servidor.
 - **Respaldos:** no guardes copias como `main_backup_*.py`; git ya conserva cada versión (`git log -- archivo`, `git show <commit>:archivo`).

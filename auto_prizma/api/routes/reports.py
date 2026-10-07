@@ -24,20 +24,48 @@ from auto_prizma.services.history import (
     saved_report_path,
 )
 from auto_prizma.services.upload_jobs import TRABAJOS
+from auto_prizma.web.icons import icon
+from auto_prizma.web.layout import render_page
 
 
 # ============================================================
-# HISTORIAL Y REPORTES
+# FECHAS
 # ============================================================
+
+_MESES = ("ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic")
+
+
+def _fecha_local(fecha_iso):
+    """La fecha del historial en hora de Colombia, o None si no se puede leer."""
+    try:
+        fecha = datetime.fromisoformat(str(fecha_iso or ""))
+    except ValueError:
+        return None
+    if fecha.tzinfo is None:
+        fecha = fecha.replace(tzinfo=ZONA_HORARIA_COLOMBIA)
+    return fecha.astimezone(ZONA_HORARIA_COLOMBIA)
+
+
+_FECHA_DESCONOCIDA = datetime(1970, 1, 1, tzinfo=ZONA_HORARIA_COLOMBIA)
+
+
+def _mas_recientes_primero(registros):
+    """Registros del historial ordenados por fecha, del mas reciente al mas antiguo."""
+    return sorted(
+        registros,
+        key=lambda registro: _fecha_local(registro.get("fecha_iso")) or _FECHA_DESCONOCIDA,
+        reverse=True,
+    )
+
+
+def _fecha_corta(fecha):
+    """23 sep 2026"""
+    return f"{fecha.day} {_MESES[fecha.month - 1]} {fecha.year}" if fecha else "—"
+
 
 def _formatear_fecha_hora(fecha_iso):
-    try:
-        fecha = datetime.fromisoformat(fecha_iso)
-        if fecha.tzinfo is None:
-            fecha = fecha.replace(tzinfo=ZONA_HORARIA_COLOMBIA)
-        else:
-            fecha = fecha.astimezone(ZONA_HORARIA_COLOMBIA)
-    except Exception:
+    fecha = _fecha_local(fecha_iso)
+    if fecha is None:
         return "—", "—"
 
     fecha_texto = fecha.strftime("%d/%m/%Y")
@@ -46,334 +74,433 @@ def _formatear_fecha_hora(fecha_iso):
     return fecha_texto, f"{hora} {sufijo}"
 
 
-def _pagina_registros(tipo="historial"):
-    registros = list(reversed(_historial_del_usuario()))
-    es_historial = tipo == "historial"
-    activo_historial = "activo" if es_historial else ""
-    activo_reportes = "" if es_historial else "activo"
+# ============================================================
+# PIEZAS COMUNES DE LAS TABLAS
+# ============================================================
 
+def _e(valor):
+    return html.escape(str(valor or ""), quote=True)
+
+
+def _cursos(registro):
+    return registro.get("cursos") or [{"curso": "Curso sin nombre", "programa": "Programa sin nombre"}]
+
+
+def _texto(item, clave, por_defecto):
+    return str(item.get(clave) or por_defecto)
+
+
+def _encabezado(nombre_icono, titulo, subtitulo, derecha):
+    return (
+        '<header class="encabezado"><div class="encabezado-titulo">'
+        '<span class="icono-tile grande">' + icon(nombre_icono) + "</span>"
+        "<div><h1>" + html.escape(titulo) + "</h1><p>" + html.escape(subtitulo) + "</p></div></div>"
+        + derecha + "</header>"
+    )
+
+
+def _selector(id_tabla, nombre_icono, tipo, etiqueta, opciones, campo=""):
+    return (
+        '<label class="campo">' + icon(nombre_icono)
+        + '<select data-control-tabla="' + id_tabla + '" data-tipo="' + tipo + '"'
+        + (' data-campo="' + campo + '"' if campo else "")
+        + ' aria-label="' + _e(etiqueta) + '">' + opciones + "</select>"
+        + icon("chevron", "icono icono-chevron") + "</label>"
+    )
+
+
+def _opciones(texto_todos, valores):
+    return '<option value="">' + html.escape(texto_todos) + "</option>" + "".join(
+        '<option value="' + _e(valor) + '">' + html.escape(valor) + "</option>"
+        for valor in sorted(valores, key=str.casefold)
+    )
+
+
+_OPCIONES_FECHA = (
+    '<option value="">Todas las fechas</option>'
+    '<option value="hoy">Hoy</option>'
+    '<option value="7">Últimos 7 días</option>'
+    '<option value="30">Últimos 30 días</option>'
+    '<option value="90">Últimos 90 días</option>'
+)
+
+
+def _encabezado_orden(texto, tipo="texto", inicial=""):
+    return (
+        '<th data-orden="' + tipo + '"' + (' data-orden-inicial="' + inicial + '"' if inicial else "")
+        + '><button type="button" class="orden">' + html.escape(texto) + icon("ordenar") + "</button></th>"
+    )
+
+
+def _pie_tabla(total, unidad, por_pagina=10, tamanos=True):
+    if total:
+        resumen = f"Mostrando 1 – {min(por_pagina, total)} de {total} {unidad}"
+    else:
+        resumen = "Sin " + unidad + " todavía"
+    selector = ""
+    if tamanos:
+        selector = (
+            '<label><span class="sr-only">Filas por página</span><select data-tabla-tamano>'
+            + "".join(
+                f'<option value="{n}"{" selected" if n == por_pagina else ""}>{n} por página</option>'
+                for n in (10, 25, 50)
+            )
+            + "</select></label>"
+        )
+    return (
+        '<div class="tabla-pie"><span data-tabla-resumen>' + resumen + "</span>"
+        '<div class="tabla-pie-derecha">' + selector
+        + '<nav class="paginas" data-tabla-paginas aria-label="Páginas"></nav></div></div>'
+    )
+
+
+def _menu_acciones(etiqueta, items):
+    return (
+        '<div class="menu-acciones" data-menu>'
+        '<button type="button" class="boton-icono" data-menu-boton aria-haspopup="menu" '
+        'aria-expanded="false" aria-label="' + _e(etiqueta) + '">' + icon("mas") + "</button>"
+        '<div class="menu-desplegable flotante" role="menu" data-menu-lista hidden>' + items + "</div></div>"
+    )
+
+
+# ============================================================
+# HISTORIAL Y REPORTES
+# ============================================================
+
+def _nombre_visible_reporte(cursos):
+    """Nombre del reporte para la tabla: "Curso - Programa"."""
+    principal = cursos[0]
+    nombre = _texto(principal, "curso", "Curso sin nombre") + " - " + _texto(principal, "programa", "Programa sin nombre")
+    if len(cursos) > 1:
+        nombre += f" (y {len(cursos) - 1} curso(s) más)"
+    return nombre
+
+
+def _pagina_reportes(registros):
+    filas = []
+    programas = set()
+    cursos_vistos = set()
+    ultima = None
+
+    for registro in registros:
+        fecha = _fecha_local(registro.get("fecha_iso"))
+        cursos = _cursos(registro)
+        principal = cursos[0]
+        curso = _texto(principal, "curso", "Curso sin nombre")
+        programa = _texto(principal, "programa", "Programa sin nombre")
+        programas_registro = [_texto(item, "programa", "Programa sin nombre") for item in cursos]
+        cursos_registro = [_texto(item, "curso", "Curso sin nombre") for item in cursos]
+        programas.update(programas_registro)
+        cursos_vistos.update(cursos_registro)
+        if fecha and (ultima is None or fecha > ultima):
+            ultima = fecha
+
+        nombre = _nombre_visible_reporte(cursos)
+        archivo = str(registro.get("archivo_reporte") or "reporte.csv")
+        registro_id = _e(registro.get("id"))
+        url = "/reporte-guardado/" + registro_id
+        fecha_iso = fecha.isoformat() if fecha else ""
+        curso_celda = html.escape(curso) + (
+            f' <span class="chip">+{len(cursos) - 1}</span>' if len(cursos) > 1 else ""
+        )
+        busqueda = " ".join([nombre, archivo] + cursos_registro + programas_registro).lower()
+
+        menu = _menu_acciones(
+            "Más acciones para " + nombre,
+            '<a role="menuitem" href="' + url + '">' + icon("ver") + "Ver reporte</a>"
+            '<a role="menuitem" href="' + url + '?descargar=1">' + icon("descargar") + "Descargar CSV</a>"
+            '<button type="button" role="menuitem" data-copiar="' + url + '" data-copiar-url '
+            'data-copiado="Enlace copiado">' + icon("copiar") + "Copiar enlace</button>",
+        )
+
+        filas.append(
+            '<tr data-fila data-busqueda="' + _e(busqueda) + '" data-programa="' + _e("|".join(programas_registro))
+            + '" data-curso="' + _e("|".join(cursos_registro)) + '" data-fecha="' + fecha_iso + '">'
+            '<td data-valor="' + _e(nombre.lower()) + '"><div class="celda-nombre" title="' + _e(archivo) + '">'
+            '<span class="icono-tile chico">' + icon("documento") + "</span><div><strong>" + html.escape(nombre)
+            + "</strong><small>" + (fecha.strftime("%Y-%m-%d · %H:%M:%S") if fecha else "—") + "</small></div></div></td>"
+            '<td data-valor="' + _e(curso.lower()) + '">' + curso_celda + "</td>"
+            '<td data-valor="' + _e(programa.lower()) + '"><span class="badge-programa">' + html.escape(programa) + "</span></td>"
+            '<td class="celda-fecha" data-valor="' + fecha_iso + '"><strong>' + _fecha_corta(fecha) + "</strong><small>"
+            + (fecha.strftime("%H:%M") if fecha else "") + "</small></td>"
+            '<td class="celda-acciones">'
+            '<a class="boton secundario chico" href="' + url + '">' + icon("ver") + "Ver</a>"
+            '<a class="boton secundario chico" href="' + url + '?descargar=1">' + icon("descargar") + "CSV</a>"
+            + menu + "</td></tr>"
+        )
+
+    total = len(registros)
+    if not filas:
+        filas.append('<tr class="fila-vacia"><td colspan="5">Todavía no hay reportes guardados.</td></tr>')
+
+    plural = "" if total == 1 else "s"
+    contenido = (
+        _encabezado(
+            "documento",
+            "Reportes generados",
+            "Todos los reportes se guardan automáticamente con el nombre del curso y el programa correspondiente.",
+            '<span class="chip grande">' + icon("documento") + f"{total} reporte{plural}</span>",
+        )
+        + '<div class="panel herramientas">'
+        '<label class="campo">' + icon("buscar") + '<span class="sr-only">Buscar</span>'
+        '<input type="search" placeholder="Buscar reporte, curso o programa..." '
+        'data-control-tabla="tabla-reportes" data-tipo="buscar"></label>'
+        + _selector("tabla-reportes", "filtro", "filtro", "Programa", _opciones("Todos los programas", programas), "programa")
+        + _selector("tabla-reportes", "birrete", "filtro", "Curso", _opciones("Todos los cursos", cursos_vistos), "curso")
+        + _selector("tabla-reportes", "calendario", "fecha", "Fecha", _OPCIONES_FECHA)
+        + "</div>"
+        '<section class="mosaicos" aria-label="Resumen">'
+        '<div class="mosaico"><span class="icono-tile">' + icon("documento") + f'</span><div><strong class="num">{total}</strong><span>Reportes generados</span></div></div>'
+        '<div class="mosaico"><span class="icono-tile verde">' + icon("birrete") + f'</span><div><strong class="num">{len(programas)}</strong><span>Programas</span></div></div>'
+        '<div class="mosaico"><span class="icono-tile azul">' + icon("libro") + f'</span><div><strong class="num">{len(cursos_vistos)}</strong><span>Cursos</span></div></div>'
+        '<div class="mosaico"><span class="icono-tile morado">' + icon("calendario") + "</span><div><strong>"
+        + _fecha_corta(ultima) + "</strong><span>Último reporte</span></div></div>"
+        "</section>"
+        '<section class="panel tabla-panel" id="tabla-reportes" data-tabla data-unidad="reportes" data-por-pagina="10">'
+        '<div class="tabla-scroll"><table class="tabla"><thead><tr>'
+        + _encabezado_orden("Nombre del reporte")
+        + _encabezado_orden("Curso")
+        + _encabezado_orden("Programa")
+        + _encabezado_orden("Fecha de generación", "fecha", "desc")
+        + "<th>Acción</th></tr></thead><tbody>" + "".join(filas) + "</tbody></table></div>"
+        + _pie_tabla(total, "reportes")
+        + "</section>"
+    )
+    return render_page("Reportes", contenido, active="reportes", page_css=_CSS_REGISTROS)
+
+
+def _pagina_historial(registros):
     filas = []
     programas = set()
 
-    if es_historial:
-        for registro in registros:
-            fecha, hora = _formatear_fecha_hora(registro.get("fecha_iso", ""))
-            cursos = registro.get("cursos") or [{"curso": "Curso sin nombre", "programa": "Programa sin nombre"}]
+    for registro in registros:
+        fecha = _fecha_local(registro.get("fecha_iso"))
+        fecha_texto, hora = _formatear_fecha_hora(registro.get("fecha_iso"))
+        registro_id = _e(registro.get("id"))
+        fecha_iso = fecha.isoformat() if fecha else ""
 
-            for item in cursos:
-                curso = str(item.get("curso") or "Curso sin nombre")
-                programa = str(item.get("programa") or "Programa sin nombre")
-                programas.add(programa)
-                busqueda = html.escape(f"{curso} {programa}".lower(), quote=True)
-                programa_attr = html.escape(programa, quote=True)
-                registro_id = html.escape(str(registro.get("id") or ""), quote=True)
-
-                filas.append(
-                    f'<tr class="fila-registro" data-busqueda="{busqueda}" data-programa="{programa_attr}">'
-                    f'<td class="fecha-celda"><span class="icono-fecha">▣</span><div><strong>{html.escape(fecha)}</strong><small>{html.escape(hora)}</small></div></td>'
-                    f'<td>{html.escape(curso)}</td>'
-                    f'<td>{html.escape(programa)}</td>'
-                    f'<td class="accion-celda"><a class="boton-reporte" href="/reporte-guardado/{registro_id}">◉ <span>Ver reporte</span></a></td>'
-                    '</tr>'
-                )
-    else:
-        for registro in registros:
-            fecha, hora = _formatear_fecha_hora(registro.get("fecha_iso", ""))
-            cursos = registro.get("cursos") or [{"curso": "Curso sin nombre", "programa": "Programa sin nombre"}]
-            principal = cursos[0]
-            curso = str(principal.get("curso") or "Curso sin nombre")
-            programa = str(principal.get("programa") or "Programa sin nombre")
-            archivo = str(registro.get("archivo_reporte") or "reporte.csv")
+        for item in _cursos(registro):
+            curso = _texto(item, "curso", "Curso sin nombre")
+            programa = _texto(item, "programa", "Programa sin nombre")
             programas.add(programa)
-            busqueda = html.escape(f"{archivo} {curso} {programa}".lower(), quote=True)
-            programa_attr = html.escape(programa, quote=True)
-            registro_id = html.escape(str(registro.get("id") or ""), quote=True)
-
             filas.append(
-                f'<tr class="fila-registro" data-busqueda="{busqueda}" data-programa="{programa_attr}">'
-                f'<td class="fecha-celda"><span class="icono-fecha">▣</span><div><strong>{html.escape(fecha)}</strong><small>{html.escape(hora)}</small></div></td>'
-                f'<td class="archivo-reporte" title="{html.escape(archivo, quote=True)}">{html.escape(archivo)}</td>'
-                f'<td>{html.escape(curso)}</td>'
-                f'<td>{html.escape(programa)}</td>'
-                f'<td class="accion-celda"><a class="boton-reporte" href="/reporte-guardado/{registro_id}">◉ <span>Ver</span></a> <a class="boton-reporte" href="/reporte-guardado/{registro_id}?descargar=1">⇩ <span>CSV</span></a></td>'
-                '</tr>'
+                '<tr data-fila data-busqueda="' + _e(f"{curso} {programa}".lower()) + '" data-programa="'
+                + _e(programa) + '" data-fecha="' + fecha_iso + '">'
+                '<td class="celda-fecha" data-valor="' + fecha_iso + '"><div class="celda-nombre">'
+                '<span class="icono-tile chico">' + icon("historial") + "</span><div><strong>"
+                + html.escape(fecha_texto) + "</strong><small>" + html.escape(hora) + "</small></div></div></td>"
+                '<td data-valor="' + _e(curso.lower()) + '" class="celda-fuerte">' + html.escape(curso) + "</td>"
+                '<td data-valor="' + _e(programa.lower()) + '"><span class="badge-programa">' + html.escape(programa) + "</span></td>"
+                '<td class="celda-acciones"><a class="boton secundario chico" href="/reporte-guardado/' + registro_id + '">'
+                + icon("ver") + "Ver reporte</a></td></tr>"
             )
 
-    opciones_programa = ''.join(
-        f'<option value="{html.escape(p, quote=True)}">{html.escape(p)}</option>'
-        for p in sorted(programas, key=str.casefold)
+    total = len(filas)
+    if not filas:
+        filas.append('<tr class="fila-vacia"><td colspan="4">Todavía no hay cargues registrados.</td></tr>')
+
+    plural = "" if total == 1 else "s"
+    contenido = (
+        _encabezado(
+            "historial",
+            "Historial de cargues",
+            "Consulta los cursos procesados anteriormente y accede a su reporte correspondiente.",
+            '<span class="chip grande">' + icon("historial") + f"{total} registro{plural}</span>",
+        )
+        + '<div class="panel herramientas dos">'
+        '<label class="campo">' + icon("buscar") + '<span class="sr-only">Buscar</span>'
+        '<input type="search" placeholder="Buscar curso o programa..." '
+        'data-control-tabla="tabla-historial" data-tipo="buscar"></label>'
+        + _selector("tabla-historial", "filtro", "filtro", "Programa", _opciones("Todos los programas", programas), "programa")
+        + _selector("tabla-historial", "calendario", "fecha", "Fecha", _OPCIONES_FECHA)
+        + "</div>"
+        '<section class="panel tabla-panel" id="tabla-historial" data-tabla data-unidad="registros" data-por-pagina="10">'
+        '<div class="tabla-scroll"><table class="tabla"><thead><tr>'
+        + _encabezado_orden("Fecha y hora", "fecha", "desc")
+        + _encabezado_orden("Curso")
+        + _encabezado_orden("Programa")
+        + "<th>Reporte</th></tr></thead><tbody>" + "".join(filas) + "</tbody></table></div>"
+        + _pie_tabla(total, "registros")
+        + "</section>"
     )
-
-    if es_historial:
-        titulo = "Historial de cargues"
-        subtitulo = "Consulta los cursos procesados anteriormente y accede a su reporte correspondiente."
-        contador = sum(len(r.get("cursos") or [1]) for r in registros)
-        contador_texto = f"{contador} registros"
-        placeholder = "Buscar curso o programa..."
-        tabla_cabecera = "<th>Fecha y hora</th><th>Curso</th><th>Programa</th><th>Reporte</th>"
-        min_table = "900px"
-        vacio = "Todavía no hay cargues registrados."
-    else:
-        titulo = "Reportes generados"
-        subtitulo = "Todos los reportes se guardan automáticamente con el nombre del curso y el programa correspondiente."
-        contador = len(registros)
-        contador_texto = f"{contador} reportes"
-        placeholder = "Buscar reporte, curso o programa..."
-        tabla_cabecera = "<th>Fecha</th><th>Nombre del reporte</th><th>Curso</th><th>Programa</th><th>Acción</th>"
-        min_table = "1120px"
-        vacio = "Todavía no hay reportes guardados."
-
-    filas_html = ''.join(filas)
-    if not filas_html:
-        filas_html = f'<tr><td colspan="5" class="vacio">{html.escape(vacio)}</td></tr>'
-
-    pagina = '''<!DOCTYPE html>
-<html lang="es">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>__TITULO__ - Cargue Prizma Pro</title>
-    <style>
-        :root{--fondo:#f7f8fc;--panel:#fff;--texto:#101828;--muted:#667085;--borde:#e5e7ef;--morado:#5548e8;--sombra:0 12px 34px rgba(29,41,57,.06)}
-        *{box-sizing:border-box} body{margin:0;font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:var(--fondo);color:var(--texto)}
-        .app{min-height:100vh;display:grid;grid-template-columns:235px 1fr}.sidebar{position:sticky;top:0;height:100vh;background:#fff;border-right:1px solid var(--borde);padding:28px 20px;display:flex;flex-direction:column}
-        .marca{display:flex;align-items:center;gap:12px;margin-bottom:34px}.logo{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(145deg,#6d5dfc,#4338ca);box-shadow:0 8px 20px rgba(79,70,229,.25)}
-        .logo svg{width:29px;height:29px;overflow:visible}.logo svg path:first-child{fill:#fff}.logo svg path:last-child{fill:#c7d2fe}.marca strong{display:block;font-size:18px}.marca span{display:block;color:var(--muted);font-size:12px;margin-top:3px}
-        .nav{display:grid;gap:8px}.nav-item{padding:12px 14px;border-radius:11px;color:#475467;font-size:14px;display:flex;gap:11px;align-items:center;text-decoration:none;transition:.18s ease}.nav-item:hover{background:#f7f5ff;color:#4f46e5}.nav-item.activo{background:#f1efff;color:#4f46e5;font-weight:700}
-        .estado-servicio{margin-top:auto;border:1px solid var(--borde);border-radius:14px;padding:15px}.servicio-linea{font-size:12px;font-weight:800;color:#07894f;margin-bottom:14px}.punto{width:8px;height:8px;background:#12b76a;border-radius:50%;display:inline-block;margin-right:7px}.servicio-mini{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);margin-top:10px}.chip{background:#eef2ff;color:#4f46e5;border-radius:999px;padding:4px 8px}
-        .contenido{padding:30px 34px}.panel{background:#fff;border:1px solid var(--borde);border-radius:18px;box-shadow:var(--sombra);padding:28px;max-width:1320px;margin:0 auto}.cabecera{display:flex;align-items:flex-start;justify-content:space-between;gap:20px}h1{font-size:28px;margin:0 0 7px}.subtitulo{margin:0;color:var(--muted);font-size:14px}.contador{background:#f1efff;color:#4f46e5;border-radius:10px;padding:9px 12px;font-size:12px;font-weight:800;white-space:nowrap}
-        .herramientas{display:grid;grid-template-columns:minmax(260px,1fr) 290px;gap:18px;margin:28px 0 22px}.buscador,.filtro{height:52px;border:1px solid #d8dce6;border-radius:11px;background:#fff;display:flex;align-items:center;gap:10px;padding:0 15px;color:#667085}.buscador input,.filtro select{width:100%;border:0;outline:0;background:transparent;font-size:14px;color:#475467}.filtro select{cursor:pointer}
-        .tabla-wrap{border:1px solid var(--borde);border-radius:14px;overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px;min-width:__MIN_TABLE__}thead{background:#faf9ff}th{text-align:left;padding:15px 16px;color:#4338ca;font-size:12px;border-bottom:1px solid var(--borde)}td{padding:15px 16px;border-bottom:1px solid #eef0f4;vertical-align:middle;color:#344054}tbody tr:last-child td{border-bottom:0}.fecha-celda{display:flex;align-items:center;gap:11px;white-space:nowrap}.fecha-celda strong{display:block;font-weight:500}.fecha-celda small{display:block;color:#98a2b3;margin-top:4px}.icono-fecha{width:34px;height:34px;border-radius:9px;background:#f4f1ff;color:#6d5dfc;display:grid;place-items:center}.accion-celda{white-space:nowrap}.boton-reporte{display:inline-flex;align-items:center;gap:7px;border:1px solid #d7d0ff;color:#5b4ce8;text-decoration:none;border-radius:9px;padding:9px 12px;font-weight:700;font-size:12px;background:#fff}.boton-reporte:hover{background:#f7f5ff}.archivo-reporte{max-width:390px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.vacio{text-align:center;color:#98a2b3;padding:50px 20px!important}.oculta{display:none}
-        @media(max-width:1050px){.app{grid-template-columns:1fr}.sidebar{display:none}.contenido{padding:20px}}@media(max-width:700px){.contenido{padding:12px}.panel{padding:18px}.cabecera{flex-direction:column}.herramientas{grid-template-columns:1fr}}
-    </style><link rel="stylesheet" href="/estilos-responsive.css"><script src="/tema.js" defer></script>
-</head>
-<body>
-<div class="app">
-    <aside class="sidebar">
-        <div class="marca"><div class="logo"><img class="logo-imagen" src="/auto-prizma-logo.png" alt="Logo Cargue Prizma Pro"></div><div><strong>Cargue Prizma Pro</strong><span>Cargue Prizma</span></div></div>
-        <nav class="nav">
-            <a class="nav-item" href="/">⌂ <span>Inicio</span></a>
-            <a class="nav-item" href="/tests">▣ <span>Test</span></a>
-            <a class="nav-item" href="/cargue-actual">⇧ <span>Cargue actual</span></a>
-            <a class="nav-item __ACTIVO_HISTORIAL__" href="/historial">◷ <span>Historial</span></a>
-            <a class="nav-item __ACTIVO_REPORTES__" href="/reportes">▥ <span>Reportes</span></a>
-            <a class="nav-item" href="/cambiar-clave">✎ <span>Mi contraseña</span></a>
-            <a class="nav-item" href="/salir">⏻ <span>Salir</span></a>
-        </nav>
-        <div class="estado-servicio"><div class="servicio-linea"><span class="punto"></span> Servicio activo</div><div class="servicio-mini"><span>Navegador</span><span class="chip">Chromium</span></div><div class="servicio-mini"><span>Conexión</span><span class="chip">Estable</span></div></div>
-    </aside>
-    <main class="contenido"><section class="panel"><div class="cabecera"><div><h1>__TITULO__</h1><p class="subtitulo">__SUBTITULO__</p></div><div class="contador">▣ &nbsp;__CONTADOR__</div></div><div class="herramientas"><label class="buscador">⌕ <input id="buscar" type="search" placeholder="__PLACEHOLDER__"></label><label class="filtro">▽ <select id="programa"><option value="">Todos los programas</option>__OPCIONES__</select></label></div><div class="tabla-wrap"><table><thead><tr>__CABECERA__</tr></thead><tbody>__FILAS__</tbody></table></div></section></main>
-</div>
-<script>
-const buscar=document.getElementById('buscar');const programa=document.getElementById('programa');function filtrar(){const texto=(buscar.value||'').trim().toLowerCase();const p=programa.value||'';document.querySelectorAll('.fila-registro').forEach(f=>{const okTexto=!texto||(f.dataset.busqueda||'').includes(texto);const okPrograma=!p||f.dataset.programa===p;f.classList.toggle('oculta',!(okTexto&&okPrograma));});}buscar.addEventListener('input',filtrar);programa.addEventListener('change',filtrar);
-</script>
-</body></html>'''
-
-    pagina = (pagina
-        .replace("__TITULO__", html.escape(titulo))
-        .replace("__SUBTITULO__", html.escape(subtitulo))
-        .replace("__CONTADOR__", html.escape(contador_texto))
-        .replace("__PLACEHOLDER__", html.escape(placeholder, quote=True))
-        .replace("__OPCIONES__", opciones_programa)
-        .replace("__CABECERA__", tabla_cabecera)
-        .replace("__FILAS__", filas_html)
-        .replace("__MIN_TABLE__", min_table)
-        .replace("__ACTIVO_HISTORIAL__", activo_historial)
-        .replace("__ACTIVO_REPORTES__", activo_reportes)
-    )
-    return HTMLResponse(pagina)
+    return render_page("Historial", contenido, active="historial", page_css=_CSS_REGISTROS)
 
 
 @app.get("/historial", response_class=HTMLResponse)
 def historial_cargues():
-    return _pagina_registros("historial")
+    return HTMLResponse(_pagina_historial(_mas_recientes_primero(_historial_del_usuario())))
 
 
 @app.get("/reportes", response_class=HTMLResponse)
 def reportes_generados():
-    return _pagina_registros("reportes")
+    return HTMLResponse(_pagina_reportes(_mas_recientes_primero(_historial_del_usuario())))
 
 
-def _clase_resultado(valor):
-    """Color segun el resultado de la fila."""
+# ============================================================
+# DETALLE DE UN REPORTE
+# ============================================================
+
+def _categoria_resultado(valor):
+    """ok / omitido / cancelado / error segun el texto de la columna Resultado."""
     texto = normalizar_texto(valor)
 
     if "cargad" in texto or "exito" in texto or texto == "ok":
-        return ("#ecfdf3", "#067647", "#abefc6")
+        return "ok"
 
     if "omitid" in texto or "ya exist" in texto or "duplicad" in texto:
-        return ("#fffaeb", "#b54708", "#fedf89")
+        return "omitido"
 
     if "cancel" in texto:
-        return ("#f2f4f7", "#475467", "#e4e7ec")
+        return "cancelado"
 
-    return ("#fef3f2", "#b42318", "#fecdca")
+    return "error"
+
+
+_ICONO_RESULTADO = {"ok": "check-circulo", "error": "alerta-circulo", "omitido": "info", "cancelado": "info"}
+
+_MOSAICOS_RESULTADO = (
+    # (categoria, icono, titulo, descripcion, siempre visible)
+    ("error", "alerta", "Errores encontrados", "Registros con problemas en la carga", True),
+    ("ok", "check", "Registros OK", "Cargados correctamente", True),
+    ("omitido", "info", "Omitidos", "Ya existían o estaban duplicados", False),
+    ("cancelado", "info", "Cancelados", "No se procesaron por la cancelación", False),
+)
+
+
+# Columnas cortas que no se parten y columnas de texto largo con ancho minimo.
+_COLUMNAS_ESTRECHAS = {"fila excel", "categoria", "tipo", "resultado"}
+_COLUMNAS_ANCHAS = {"actividad", "recurso", "curso"}
+
+
+def _clase_columna(nombre):
+    clave = normalizar_texto(nombre)
+    if clave in _COLUMNAS_ESTRECHAS:
+        return "col-estrecha"
+    if clave in _COLUMNAS_ANCHAS:
+        return "col-ancha"
+    if clave == "observacion":
+        return "col-observacion"
+    return ""
+
+
+def _indice_columna(cabeceras, nombre):
+    for posicion, cabecera in enumerate(cabeceras):
+        if normalizar_texto(cabecera) == normalizar_texto(nombre):
+            return posicion
+    return None
 
 
 def _pagina_reporte_html(titulo, subtitulo, ruta_csv, url_descarga):
     """Muestra el reporte como tabla dentro de la app."""
-
-    def e(valor):
-        return html.escape(str(valor or ""))
-
     try:
         cabeceras, filas = _leer_reporte_csv(ruta_csv)
     except OSError:
         cabeceras, filas = [], []
 
-    # Indice de la columna Resultado, para colorear y contar.
-    indice_resultado = None
-    for posicion, nombre in enumerate(cabeceras):
-        if normalizar_texto(nombre) == normalizar_texto("Resultado"):
-            indice_resultado = posicion
-            break
+    indice_resultado = _indice_columna(cabeceras, "Resultado")
+    indice_observacion = _indice_columna(cabeceras, "Observación")
+    indice_fila = _indice_columna(cabeceras, "Fila Excel")
 
-    conteo = {}
-    filas_html = ""
+    clases = [_clase_columna(nombre) for nombre in cabeceras]
+    conteo = {"ok": 0, "error": 0, "omitido": 0, "cancelado": 0}
+    filas_html = []
 
     for fila in filas:
-        resultado = ""
-        if indice_resultado is not None and indice_resultado < len(fila):
-            resultado = str(fila[indice_resultado] or "").strip()
-
-        conteo[resultado or "—"] = conteo.get(resultado or "—", 0) + 1
-        fondo, letra, borde = _clase_resultado(resultado)
-
-        celdas = ""
+        celdas = []
         for posicion, valor in enumerate(fila):
+            texto = str(valor or "")
+            clase = clases[posicion] if posicion < len(clases) else ""
             if posicion == indice_resultado:
-                celdas += (
-                    '<td style="white-space:nowrap;">'
-                    '<span style="display:inline-block;padding:3px 10px;'
-                    'border-radius:999px;font-size:11px;font-weight:800;'
-                    'background:' + fondo + ';color:' + letra + ';'
-                    'border:1px solid ' + borde + ';">'
-                    + e(valor) + "</span></td>"
+                categoria = _categoria_resultado(texto)
+                conteo[categoria] += 1
+                celdas.append(
+                    '<td class="' + clase + '"><span class="resultado ' + categoria + '">'
+                    + icon(_ICONO_RESULTADO[categoria]) + html.escape(texto.strip() or "—") + "</span></td>"
                 )
+            elif posicion == indice_fila:
+                celdas.append('<td class="celda-fuerte num ' + clase + '">' + html.escape(texto) + "</td>")
             else:
-                celdas += (
-                    '<td style="padding:9px 14px;border-bottom:1px solid #f2f4f7;'
-                    'color:#475467;vertical-align:top;">' + e(valor) + "</td>"
-                )
+                celdas.append('<td class="' + clase + '">' + html.escape(texto) + "</td>")
 
-        filas_html += (
-            '<tr>' + celdas.replace(
-                '<td style="white-space:nowrap;">',
-                '<td style="white-space:nowrap;padding:9px 14px;'
-                'border-bottom:1px solid #f2f4f7;vertical-align:top;">',
-            ) + "</tr>"
+        if indice_observacion is not None:
+            observacion = fila[indice_observacion] if indice_observacion < len(fila) else ""
+            celdas.append(
+                '<td class="celda-acciones">' + _menu_acciones(
+                    "Más acciones para la fila",
+                    '<button type="button" role="menuitem" data-copiar="' + _e(observacion) + '" '
+                    'data-copiado="Observación copiada">' + icon("copiar") + "Copiar observación</button>",
+                ) + "</td>"
+            )
+
+        filas_html.append(
+            '<tr data-fila data-busqueda="' + _e(" ".join(str(v) for v in fila).lower()) + '">' + "".join(celdas) + "</tr>"
         )
 
-    encabezados_html = "".join(
-        '<th style="text-align:left;padding:10px 14px;font-size:11px;'
-        'letter-spacing:.03em;color:#667085;background:#f9fafb;'
-        'border-bottom:1px solid #e4e7ec;position:sticky;top:0;">'
-        + e(nombre).upper() + "</th>"
-        for nombre in cabeceras
-    )
+    columnas = len(cabeceras) + (1 if indice_observacion is not None else 0)
 
-    tarjetas = ""
-    for valor, cantidad in sorted(
-        conteo.items(), key=lambda par: -par[1]
-    ):
-        fondo, letra, borde = _clase_resultado(valor)
-        tarjetas += (
-            '<div style="background:' + fondo + ';border:1px solid ' + borde
-            + ';border-radius:12px;padding:12px 16px;min-width:120px;">'
-            '<div style="font-size:22px;font-weight:800;color:' + letra + ';">'
-            + str(cantidad) + "</div>"
-            '<div style="font-size:11.5px;color:#667085;margin-top:2px;">'
-            + e(valor) + "</div></div>"
-        )
-
-    if not filas:
-        cuerpo = (
-            '<div style="padding:48px 24px;text-align:center;color:#667085;">'
-            "El reporte no tiene filas todavía.</div>"
+    if indice_resultado is not None:
+        mosaicos = "".join(
+            '<div class="mosaico estado ' + categoria + '"><span class="icono-tile ' + {
+                "error": "rojo", "ok": "verde", "omitido": "ambar", "cancelado": ""
+            }[categoria] + '">' + icon(nombre_icono) + '</span><div><strong class="num">' + str(conteo[categoria])
+            + "</strong><b>" + titulo_mosaico + "</b><small>" + descripcion + "</small></div></div>"
+            for categoria, nombre_icono, titulo_mosaico, descripcion, siempre in _MOSAICOS_RESULTADO
+            if siempre or conteo[categoria]
         )
     else:
-        cuerpo = (
-            '<div style="overflow:auto;max-height:62vh;">'
-            '<table style="width:100%;border-collapse:collapse;font-size:12.5px;">'
-            "<thead><tr>" + encabezados_html + "</tr></thead>"
-            "<tbody>" + filas_html + "</tbody></table></div>"
+        mosaicos = (
+            '<div class="mosaico estado"><span class="icono-tile">' + icon("documento")
+            + '</span><div><strong class="num">' + str(len(filas)) + "</strong><b>Registros</b>"
+            "<small>Filas del reporte</small></div></div>"
         )
 
-    return f"""<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{e(titulo)} - Cargue Prizma Pro</title>
-<style>
-:root{{--fondo:#f7f8fc;--texto:#101828;--muted:#667085;--borde:#e5e7ef}}
-*{{box-sizing:border-box}}
-body{{margin:0;font-family:Inter,ui-sans-serif,-apple-system,"Segoe UI",sans-serif;
-background:var(--fondo);color:var(--texto)}}
-.app{{min-height:100vh;display:grid;grid-template-columns:235px 1fr}}
-.sidebar{{height:100vh;background:#fff;border-right:1px solid var(--borde);
-padding:28px 20px;display:flex;flex-direction:column}}
-.marca{{display:flex;align-items:center;gap:12px;margin-bottom:34px}}
-.logo{{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;
-background:linear-gradient(145deg,#6d5dfc,#4338ca)}}
-.logo svg{{width:29px;height:29px}}
-.logo svg path:first-child{{fill:#fff}}.logo svg path:last-child{{fill:#c7d2fe}}
-.marca strong{{display:block;font-size:18px}}
-.marca span{{display:block;color:var(--muted);font-size:12px;margin-top:3px}}
-.nav{{display:grid;gap:8px}}
-.nav-item{{padding:12px 14px;border-radius:11px;color:#475467;font-size:14px;
-display:flex;gap:11px;align-items:center;text-decoration:none}}
-.nav-item:hover{{background:#f7f5ff;color:#4f46e5}}
-.nav-item.activo{{background:#f1efff;color:#4f46e5;font-weight:700}}
-.estado-servicio{{margin-top:auto;border:1px solid var(--borde);border-radius:14px;padding:15px}}
-.servicio-linea{{font-size:12px;font-weight:800;color:#07894f;margin-bottom:14px}}
-.punto{{width:8px;height:8px;background:#12b76a;border-radius:50%;display:inline-block;margin-right:7px}}
-.servicio-mini{{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);margin-top:10px}}
-.chip{{background:#eef2ff;color:#4f46e5;border-radius:999px;padding:4px 8px}}
-.contenido{{padding:30px 34px 44px;min-width:0}}
-.panel{{background:#fff;border:1px solid var(--borde);border-radius:18px;
-box-shadow:0 10px 30px rgba(29,41,57,.05);overflow:hidden}}
-.cabecera{{display:flex;justify-content:space-between;gap:18px;
-align-items:flex-start;margin-bottom:20px;flex-wrap:wrap}}
-.cabecera h1{{font-size:26px;margin:0 0 6px}}
-.cabecera p{{margin:0;color:var(--muted);font-size:13.5px}}
-.acciones{{display:flex;gap:10px;flex-wrap:wrap}}
-.boton{{display:inline-flex;align-items:center;gap:8px;padding:11px 16px;
-border-radius:10px;text-decoration:none;font-size:13px;font-weight:700}}
-.boton-primario{{background:linear-gradient(90deg,#5548e8,#6546e8);color:#fff}}
-.boton-secundario{{background:#fff;color:#4f46e5;border:1px solid #d8d6f8}}
-.tarjetas{{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:18px}}
-tbody tr:hover{{background:#fafaff}}
-</style><link rel="stylesheet" href="/estilos-responsive.css"><script src="/tema.js" defer></script></head>
-<body><div class="app">
-<aside class="sidebar">
-  <div class="marca">
-    <div class="logo"><img class="logo-imagen" src="/auto-prizma-logo.png" alt="Logo Cargue Prizma Pro"></div>
-    <div><strong>Cargue Prizma Pro</strong><span>Cargue Prizma</span></div>
-  </div>
-  <nav class="nav">
-    <a class="nav-item" href="/">⌂ <span>Inicio</span></a>
-    <a class="nav-item" href="/tests">▣ <span>Test</span></a>
-    <a class="nav-item" href="/cargue-actual">⇧ <span>Cargue actual</span></a>
-    <a class="nav-item" href="/historial">◷ <span>Historial</span></a>
-    <a class="nav-item activo" href="/reportes">▥ <span>Reportes</span></a>
-    <a class="nav-item" href="/cambiar-clave">✎ <span>Mi contraseña</span></a>
-    <a class="nav-item" href="/salir">⏻ <span>Salir</span></a>
-  </nav>
-  <div class="estado-servicio"><div class="servicio-linea"><span class="punto"></span> Servicio activo</div><div class="servicio-mini"><span>Navegador</span><span class="chip">Chromium</span></div><div class="servicio-mini"><span>Conexión</span><span class="chip">Estable</span></div></div>
-</aside>
-<main class="contenido">
-  <section class="cabecera">
-    <div>
-      <h1>{e(titulo)}</h1>
-      <p>{e(subtitulo)}</p>
-    </div>
-    <div class="acciones">
-      <a class="boton boton-secundario" href="/reportes">← Volver</a>
-      <a class="boton boton-primario" href="{e(url_descarga)}">⇩ Descargar CSV</a>
-    </div>
-  </section>
-  <div class="tarjetas">{tarjetas}</div>
-  <div class="panel">{cuerpo}</div>
-</main></div></body></html>"""
+    if filas_html:
+        cuerpo_tabla = "".join(filas_html)
+    else:
+        cuerpo_tabla = '<tr class="fila-vacia"><td colspan="' + str(max(columnas, 1)) + '">El reporte no tiene filas todavía.</td></tr>'
+
+    encabezados = "".join(
+        '<th class="' + clase + '">' + html.escape(nombre) + "</th>"
+        for nombre, clase in zip(cabeceras, clases)
+    )
+    if indice_observacion is not None:
+        encabezados += '<th><span class="sr-only">Acciones</span></th>'
+
+    contenido = (
+        '<header class="encabezado"><div class="encabezado-titulo">'
+        '<span class="icono-tile grande">' + icon("birrete") + "</span>"
+        "<div><h1>" + html.escape(titulo) + "</h1><p>" + html.escape(subtitulo) + "</p></div></div>"
+        '<div class="encabezado-acciones">'
+        '<a class="boton neutro" href="/reportes">' + icon("flecha-izquierda") + "Volver</a>"
+        '<a class="boton" href="' + _e(url_descarga) + '">' + icon("descargar") + "Descargar CSV</a>"
+        "</div></header>"
+        '<section class="mosaicos mosaicos-resultado" aria-label="Resumen del resultado">' + mosaicos + "</section>"
+        '<section class="panel tabla-panel" id="tabla-detalle" data-tabla data-unidad="registros" data-por-pagina="10">'
+        '<div class="tabla-cabecera"><div class="encabezado-titulo">'
+        '<span class="icono-tile chico">' + icon("reportes") + "</span>"
+        "<div><h2>Detalle de registros del curso</h2>"
+        "<p>Revisa el resultado de la carga por fila del archivo Excel.</p></div></div>"
+        '<label class="campo campo-borde">' + icon("buscar") + '<span class="sr-only">Buscar en la tabla</span>'
+        '<input type="search" placeholder="Buscar en la tabla..." data-control-tabla="tabla-detalle" data-tipo="buscar"></label>'
+        "</div>"
+        '<div class="tabla-scroll"><table class="tabla mayusculas tabla-detalle"><thead><tr>' + encabezados
+        + "</tr></thead><tbody>" + cuerpo_tabla + "</tbody></table></div>"
+        + _pie_tabla(len(filas), "registros")
+        + "</section>"
+    )
+    return render_page(titulo, contenido, active="reportes", page_css=_CSS_REGISTROS)
+
+
+_CSS_REGISTROS = r"""
+.mosaicos-resultado { grid-template-columns: repeat(auto-fit, minmax(260px, 340px)); }
+.tabla-detalle th, .tabla-detalle td { padding: 14px 12px; }
+.tabla-detalle td { vertical-align: top; }
+.tabla-detalle .col-estrecha { white-space: nowrap; }
+.tabla-detalle .col-ancha { min-width: 130px; }
+.tabla-detalle .col-observacion { min-width: 200px; overflow-wrap: anywhere; }
+.tabla .resultado { margin-top: -3px; }
+.celda-nombre .icono-tile.chico { width: 40px; height: 40px; }
+"""
 
 
 @app.get("/reporte-guardado/{registro_id}")

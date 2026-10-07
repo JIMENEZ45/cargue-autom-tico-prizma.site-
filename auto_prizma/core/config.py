@@ -76,6 +76,12 @@ LOGO_PATH = os.path.join(
     "auto_prizma_logo.png",
 )
 
+# Hoja de estilos y script comunes de todas las paginas (marco, tema claro/
+# oscuro, menus, tablas). Se sirven en /app.css y /app.js.
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+APP_CSS_PATH = os.path.join(STATIC_DIR, "app.css")
+APP_JS_PATH = os.path.join(STATIC_DIR, "app.js")
+
 UPLOADS_DIR = os.path.join(
     BASE_DIR,
     "uploads",
@@ -234,6 +240,13 @@ PRIZMA_ES_PRODUCCION = PRIZMA_BASE_URL == PRIZMA_URL_PRODUCCION
 CHROMIUM_ARGS = ["--no-sandbox", "--disable-dev-shm-usage"]
 
 VIEWPORT_NAVEGADOR = {"width": 1440, "height": 900}
+
+# Estado real del servicio que muestran la barra lateral y los indicadores de
+# Inicio (services/health.py): cada comprobacion se guarda en memoria este
+# tiempo para no repetirla en cada pagina.
+HEALTH_CHROMIUM_TTL_SECONDS = 30 * 60
+HEALTH_PRIZMA_TTL_SECONDS = 3 * 60
+HEALTH_PRIZMA_TIMEOUT_SECONDS = 6
 
 # Reintentos al abrir la sesion de PRIZMA al INICIO de un cargue: segundos de
 # espera antes de cada reintento (2 esperas = 3 intentos en total). Solo se

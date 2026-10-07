@@ -4,6 +4,7 @@
 from fastapi import Request as FastAPIRequest
 from fastapi.responses import (
     HTMLResponse,
+    JSONResponse,
     RedirectResponse,
 )
 from google_auth_oauthlib.flow import Flow
@@ -14,6 +15,7 @@ from auto_prizma.services.auth import (
     _normalizar_usuario,
     _usuario_actual,
 )
+from auto_prizma.integrations.google.drive import check_sheet_link
 from auto_prizma.integrations.google.oauth import (
     GOOGLE_SCOPES,
     _consumir_estado_oauth,
@@ -171,6 +173,12 @@ def google_callback(request: FastAPIRequest):
             ),
             status_code=500,
         )
+
+
+@app.get("/google/validar-matriz")
+def google_validar_matriz(url: str = ""):
+    """Comprueba el enlace de Google Sheets que se pega en Inicio (JSON)."""
+    return JSONResponse(check_sheet_link(url))
 
 
 @app.post("/google/desconectar")

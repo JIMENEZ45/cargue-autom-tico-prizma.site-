@@ -12,7 +12,7 @@ import pytest
 
 from auto_prizma.automation.prizma import engine
 from auto_prizma.core import config
-from auto_prizma.web import views
+from auto_prizma.web import layout, views
 
 
 @pytest.mark.parametrize(
@@ -64,10 +64,10 @@ def test_engine_uses_configured_login_url():
 
 
 def test_test_environment_banner_only_outside_production(monkeypatch):
-    monkeypatch.setattr(views, "PRIZMA_ES_PRODUCCION", True)
+    monkeypatch.setattr(layout, "PRIZMA_ES_PRODUCCION", True)
     assert "Ambiente de pruebas de PRIZMA" not in views.generar_html()
 
-    monkeypatch.setattr(views, "PRIZMA_ES_PRODUCCION", False)
-    monkeypatch.setattr(views, "PRIZMA_HOST", "admin.prizma.solutions")
+    monkeypatch.setattr(layout, "PRIZMA_ES_PRODUCCION", False)
+    monkeypatch.setattr(layout, "PRIZMA_HOST", "admin.prizma.solutions")
     pagina = views.generar_html()
     assert "Ambiente de pruebas de PRIZMA:</strong> admin.prizma.solutions" in pagina

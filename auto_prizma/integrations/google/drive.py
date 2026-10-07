@@ -2,6 +2,7 @@
 """
 
 from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from auto_prizma.automation.prizma import engine as motor_prizma_modulo
 from auto_prizma.automation.prizma.engine import normalizar_texto
 import re
@@ -181,6 +182,90 @@ def _extraer_spreadsheet_id(url_google_sheet):
         flags=re.IGNORECASE,
     )
     return m.group(1) if m else ""
+
+
+def check_sheet_link(url_google_sheet):
+    """Comprueba, sin descargar nada, que el enlace de la matriz se puede leer.
+
+    Usa la cuenta de Google del usuario y solo pide metadatos (titulo del
+    documento y de sus pestanas). Lo usa la pantalla de Inicio al pegar el
+    enlace; el analisis sigue validando todo por su cuenta.
+
+    Returns:
+        {"ok": True, "documento": titulo, "pestana": titulo} si se puede leer,
+        o {"ok": False, "motivo": texto para el usuario, "conectar": bool}
+        ("conectar" indica que falta conectar la cuenta de Google).
+    """
+    url = str(url_google_sheet or "").strip()
+
+    spreadsheet_id = _extraer_spreadsheet_id(url)
+    if not spreadsheet_id:
+        return {
+            "ok": False,
+            "conectar": False,
+            "motivo": "No es un enlace de Google Sheets (debe empezar por "
+                      "https://docs.google.com/spreadsheets/d/...).",
+        }
+
+    gid = _extraer_gid(url)
+    if not gid:
+        return {
+            "ok": False,
+            "conectar": False,
+            "motivo": "El enlace no indica la pestaña (falta #gid=...). Abre la "
+                      "pestaña que vas a cargar y copia el enlace desde ahí.",
+        }
+
+    credenciales = _cargar_credenciales_google()
+    if credenciales is None:
+        return {
+            "ok": False,
+            "conectar": True,
+            "motivo": "Conecta tu cuenta de Google para leer la matriz por link.",
+        }
+
+    try:
+        sheets = build("sheets", "v4", credentials=credenciales, cache_discovery=False)
+        meta = sheets.spreadsheets().get(
+            spreadsheetId=spreadsheet_id,
+            fields="properties(title),sheets.properties(sheetId,title)",
+        ).execute()
+    except HttpError as error:
+        estado = getattr(getattr(error, "resp", None), "status", None)
+        if estado == 404:
+            motivo = "No se encontró la hoja, o tu cuenta de Google no tiene acceso a ella."
+        elif estado in (401, 403):
+            motivo = (
+                "Tu cuenta de Google no tiene permiso para leer esta hoja. "
+                "Verifica que puedas abrirla con esa misma cuenta."
+            )
+        else:
+            motivo = "Google respondió con un error (" + str(estado) + "). Intenta de nuevo en un momento."
+        return {"ok": False, "conectar": False, "motivo": motivo}
+    except Exception as error:
+        return {
+            "ok": False,
+            "conectar": False,
+            "motivo": "No se pudo comprobar el enlace ahora (" + type(error).__name__
+                      + "). Puedes analizar igualmente.",
+        }
+
+    documento = str((meta.get("properties") or {}).get("title") or "").strip()
+    for item in meta.get("sheets", []):
+        propiedades = item.get("properties") or {}
+        if str(propiedades.get("sheetId")) == gid:
+            return {
+                "ok": True,
+                "documento": documento,
+                "pestana": str(propiedades.get("title") or "").strip(),
+            }
+
+    return {
+        "ok": False,
+        "conectar": False,
+        "motivo": "El enlace apunta a una pestaña que ya no existe en esa hoja. "
+                  "Abre la pestaña correcta y copia el enlace de nuevo.",
+    }
 
 
 def _url_desde_cell_data(celda):

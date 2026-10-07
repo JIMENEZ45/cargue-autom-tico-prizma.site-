@@ -22,7 +22,8 @@ Monolito FastAPI en capas, dentro del paquete `auto_prizma/`. El HTML se genera 
 Navegador ──HTTP──> api/routes/*  ──> services/*  ──> integrations/google/*  ──> Google Sheets / Drive
                          │               │
                          │               └──> automation/prizma/engine.py ──Playwright──> PRIZMA
-                         └──> web/views.py (HTML)
+                         └──> web/views.py y vistas de cada ruta ──> web/layout.py (marco comun)
+                                                                  + static/app.css / app.js
 evaluative_tests/  = módulo de funcionalidad completo (rutas, estado, parser, automatización, vistas)
 core/config.py     = toda la configuración; core/application.py = instancia FastAPI compartida
 ```
@@ -30,10 +31,11 @@ core/config.py     = toda la configuración; core/application.py = instancia Fas
 - Las rutas se registran **al importar** cada módulo de `api/routes/` sobre la instancia compartida `auto_prizma.core.application.app` (decoradores `@app.get/@app.post`). `evaluative_tests/routes.py` usa un `APIRouter` que `main.py` incluye al final.
 - Estado de trabajos en memoria (`TRABAJOS`, cola, jobs de tests). Persistencia en archivos JSON/CSV bajo `DATA_DIR`.
 - Cada cargue corre en su propio hilo con su propio Chromium; máximo 2 simultáneos.
+- **Interfaz**: todas las páginas se arman con el marco común `web/layout.py` (`render_page`; el login con `render_public_page`): menú lateral con íconos, estado real del servicio, barra superior con tema claro/oscuro y menú de usuario, y aviso de ambiente de pruebas. El aspecto común vive en `static/app.css` (colores como variables; el tema oscuro solo redefine variables) y el comportamiento común en `static/app.js` (tema, menús, copiar, diálogos, estado del servicio, tablas con búsqueda/filtros/orden/paginación). Cada página agrega solo su contenido y su CSS/JS propio.
 
 ### Estado de la reorganización (2026-10-06)
 
-Se está reorganizando por fases. Hechas: **Fase 1–2** (auditoría y propuesta), **Fase 3** (estructura y nombres en inglés) y **Fase 4** (configuración centralizada) — commit `9b2c1e5`, sin cambios de comportamiento (mismas rutas, mismo HTML byte a byte). **Red de seguridad para la fase 7**: pruebas de caracterización del motor y de `drive_resource_policy` — commit `1e43574`. **Correcciones del motor** (campo Html vs H5P, diagnóstico de guardado, reintentos de sesión inicial, `import sys`) — commit `0e9ae40`. **Fase 5** (servicios): lógica de `/analizar`, `/iniciar`, `/cargue-actual`, `/cancelar`, `/estado` y reportes movida a `services/`; historial en `services/history.py`; escritura atómica única (`core/storage.py`); hora en `core/clock.py`; nombres de archivo en `domain/file_names.py`; código muerto eliminado; la contraseña PRIZMA ya no se retiene en el trabajo. Verificado: mismas rutas, mismo HTML y misma salida de `/analizar` que el código original. **Formato HTML para los recursos interactivos** (ver PRIZMA): probado en el ambiente de pruebas de PRIZMA e integrado en `main` el 2026-10-07. Pendientes: **6** integraciones, **7** dividir `automation/prizma/engine.py` (~5800 líneas) y eliminar el monkeypatching, **8** rutas (pasar a `APIRouter`, layout HTML común), **9** más tests, **10** `docs/ARCHITECTURE.md`.
+Se está reorganizando por fases. Hechas: **Fase 1–2** (auditoría y propuesta), **Fase 3** (estructura y nombres en inglés) y **Fase 4** (configuración centralizada) — commit `9b2c1e5`, sin cambios de comportamiento (mismas rutas, mismo HTML byte a byte). **Red de seguridad para la fase 7**: pruebas de caracterización del motor y de `drive_resource_policy` — commit `1e43574`. **Correcciones del motor** (campo Html vs H5P, diagnóstico de guardado, reintentos de sesión inicial, `import sys`) — commit `0e9ae40`. **Fase 5** (servicios): lógica de `/analizar`, `/iniciar`, `/cargue-actual`, `/cancelar`, `/estado` y reportes movida a `services/`; historial en `services/history.py`; escritura atómica única (`core/storage.py`); hora en `core/clock.py`; nombres de archivo en `domain/file_names.py`; código muerto eliminado; la contraseña PRIZMA ya no se retiene en el trabajo. Verificado: mismas rutas, mismo HTML y misma salida de `/analizar` que el código original. **Formato HTML para los recursos interactivos** (ver PRIZMA): probado en el ambiente de pruebas de PRIZMA e integrado en `main` el 2026-10-07. **Fase 8, parte visual** (aprobada por el usuario e integrada en `main` el 2026-10-07): marco HTML común (`web/layout.py` + `static/app.css`/`app.js`) en todas las páginas, rediseño de Inicio, Reportes y Detalle según las imágenes del usuario, estado real del servicio, validación del enlace de Sheets y eliminación de `_patch_main_nav`. Pendientes: **6** integraciones, **7** dividir `automation/prizma/engine.py` (~5800 líneas) y eliminar el monkeypatching del motor, **8** rutas (pasar a `APIRouter`), **9** más tests, **10** `docs/ARCHITECTURE.md`.
 
 ## Estructura del proyecto
 
@@ -47,22 +49,25 @@ auto-prizma-pro/
 │   │   ├── storage.py              # read_json / write_json_atomic / write_text_atomic (escritura atómica)
 │   │   └── clock.py                # _ahora_colombia / _ahora_colombia_iso
 │   ├── api/routes/
-│   │   ├── static_files.py         # Logo, CSS responsive, script de tema
+│   │   ├── static_files.py         # Logo, /app.css y /app.js (públicos)
 │   │   ├── auth.py                 # Middleware de sesión, login, salir, cambiar clave
 │   │   ├── google.py               # /google/conectar, /google/callback, /google/desconectar
 │   │   ├── analysis.py             # / y POST /analizar (matriz + ZIP + opcional test .docx)
 │   │   ├── uploads.py              # /iniciar, /cargue-actual, /proceso, /estado, /cancelar
-│   │   └── reports.py              # /historial, /reportes, /reporte, /reporte-guardado
+│   │   ├── reports.py              # /historial, /reportes, /reporte, /reporte-guardado
+│   │   └── health.py               # /estado-servicio (JSON con el estado de Chromium y PRIZMA)
 │   ├── services/
 │   │   ├── auth.py                 # Usuarios (usuarios.json), PBKDF2, cookies HMAC, bloqueo por intentos
 │   │   ├── matrix_analysis.py      # Descarga Sheets→XLSX, CSV→XLSX, análisis de matriz y ZIP
 │   │   ├── drive_zip_validation.py # Prevalidación Drive ↔ ZIP, avisos
 │   │   ├── upload_jobs.py          # TRABAJOS, cola/hilos, test dentro del cargue y servicios de las rutas
 │   │   │                           # (create_analyzed_job, validate_access_and_enqueue, active_jobs, cancel_job, public_job_status)
-│   │   └── history.py              # historial.json, nombres/rutas de reportes, consulta por usuario, lectura del CSV
+│   │   ├── history.py              # historial.json, nombres/rutas de reportes, consulta por usuario, lectura del CSV
+│   │   └── health.py               # Estado real: Chromium instalado y PRIZMA responde (con memoria de unos minutos)
 │   ├── integrations/google/
 │   │   ├── oauth.py                # OAuth por usuario, tokens, descarga de Google Docs para tests
-│   │   └── drive.py                # Enlaces de columna G (Sheets API), listado de carpetas (Drive API)
+│   │   └── drive.py                # Enlaces de columna G (Sheets API), listado de carpetas (Drive API),
+│   │                               # check_sheet_link (valida el enlace de la matriz al pegarlo)
 │   ├── automation/prizma/
 │   │   ├── engine.py               # Motor de cargue PRIZMA (Playwright) + lectura de matriz + reporte CSV
 │   │   ├── engine_overrides.py     # Reemplaza funciones del motor al importarse (ver Decisiones)
@@ -70,19 +75,22 @@ auto-prizma-pro/
 │   ├── domain/
 │   │   ├── drive_resource_policy.py# Reglas puras de emparejamiento Drive ↔ ZIP
 │   │   └── file_names.py           # file_base_name / exact_name_key (nombres de archivo)
-│   ├── web/views.py                # HTML de la página principal (análisis y cargue)
+│   ├── web/
+│   │   ├── layout.py               # Marco común: render_page / render_public_page, menú, estado, tema, usuario
+│   │   ├── icons.py                # Íconos SVG (icon(nombre))
+│   │   └── views.py                # Inicio (formulario de análisis) y revisión antes del cargue
 │   └── evaluative_tests/           # Módulo de tests evaluativos
 │       ├── models.py, parser.py, validation.py, serializer.py
 │       ├── automation.py           # PrizmaTestAutomator (Playwright)
 │       ├── execution.py            # Ejecución en segundo plano
 │       ├── state.py                # Jobs en memoria, usuario PRIZMA recordado
-│       ├── views.py                # HTML del módulo + parche del botón "Test"
+│       ├── views.py                # HTML del módulo (usa el marco común vía _layout)
 │       └── routes.py               # APIRouter /tests/...
 ├── scripts/
 │   ├── manage_users.py             # CLI de usuarios
 │   └── check_prizma_connection.py  # Prueba manual: navegador visible, login manual, no modifica nada
 ├── tests/                          # pytest (PRIZMA y Playwright simulados)
-├── static/auto_prizma_logo.png
+├── static/                        # auto_prizma_logo.png, app.css (estilos comunes) y app.js (comportamiento común)
 ├── .env.example                    # Variables soportadas (sin valores)
 ├── requirements.txt / requirements-dev.txt (añade pytest)
 ├── Dockerfile                      # python:3.12, playwright chromium, uvicorn main:app :8000
@@ -96,7 +104,8 @@ auto-prizma-pro/
 |---|---|---|
 | `main.py` | Orden de arranque | **El orden de imports importa**: primero `engine_overrides`, luego rutas, luego `/tests`. Expone `app.state.*` que usa el módulo de tests. |
 | `core/config.py` | Única fuente de configuración | Ver sección Configuración. |
-| `api/routes/*` | HTTP | Delgadas para análisis, cargues y reportes (delegan en `services/`). Aún contienen HTML de páginas (pendiente fase 8). |
+| `api/routes/*` | HTTP | Delgadas para análisis, cargues y reportes (delegan en `services/`). Aún contienen el contenido HTML de sus páginas, pero el marco es común (`web/layout.py`). |
+| `web/layout.py` | Marco de todas las páginas | `render_page(title, content, active=..., page_css=..., page_js=..., after_main=...)`; `NAV_ITEMS` define el menú; `status_pills()` los indicadores de Inicio; `environment_notice()` el aviso de ambiente de pruebas. |
 | `services/auth.py` | Sesión y usuarios | `USUARIO_ACTUAL` (contextvar) propaga el usuario a endpoints e hilos. |
 | `services/upload_jobs.py` | Ciclo de vida del cargue | `create_analyzed_job` → `validate_access_and_enqueue` → `_encolar_trabajo` → `_despachar_cargues_pendientes` → hilo → `ejecutar_cargue_con_historial` → `engine.ejecutar_cargue`. `cancel_job`, `public_job_status` y `active_jobs` para las rutas. |
 | `services/history.py` | Historial y reportes | `_agregar_registro_historial` (sin duplicar id), `_historial_del_usuario` (solo registros propios), `find_user_record`, `saved_report_path` (solo basename dentro de `RESULTADOS_DIR`). |
@@ -108,6 +117,8 @@ auto-prizma-pro/
 
 - Datos como `dict` simples; errores del motor como strings `ERROR_*` que terminan en reportes, historial y UI (no renombrarlos).
 - HTML en raw strings con marcadores `__NOMBRE__` + `.replace`, valores escapados con `html.escape`.
+- **Páginas**: toda página con sesión se arma con `web/layout.render_page(...)` (nunca copiar el menú ni el `<head>`); colores solo con las variables de `static/app.css` (`--panel`, `--texto`, `--acento`, `--verde-suave`, ...), sin colores fijos ni reglas `html[data-theme="dark"] ... !important`; íconos con `web/icons.icon()`. Los componentes comunes (`.panel`, `.boton`, `.chip`, `.badge-*`, `.mosaico`, `.tabla`, `.aviso`, `.dropzone`, `.menu-desplegable`, `.dialogo`) están en `app.css`. Una tabla con `data-tabla` + controles `data-control-tabla="<id>"` obtiene búsqueda, filtros, orden y paginación de `app.js` sin JS propio.
+- Si un recurso estático cambia, la URL cambia sola (`?v=<fecha de modificación>`, `layout.asset_url`).
 - Archivos de datos: usar `core/storage.py` (`read_json`, `write_json_atomic`, `write_text_atomic`; escritura atómica `*.tmp` + `os.replace`). `read_json` recibe qué errores cuentan como "ilegible": `usuarios.json` solo trata errores de lectura/JSON (otros se propagan para no sobrescribir un archivo dañado al crear un usuario).
 - Un servicio que falla por una regla de negocio lanza `ValueError` con el mensaje para el usuario y la ruta lo muestra (p. ej. `create_analyzed_job` si la prevalidación Drive↔ZIP falla).
 - Logging con `print()` (no hay módulo `logging`).
@@ -131,21 +142,23 @@ auto-prizma-pro/
 
 - Instancia: `auto_prizma.core.application.app`; ASGI: `main:app`.
 - Middleware `exigir_sesion` (`api/routes/auth.py`): exige cookie `ap_sesion` salvo `RUTAS_PUBLICAS`; sin sesión → 303 a `/login`, o JSON 401 si la ruta empieza por `/estado/` o se acepta JSON. Fija `request.state.usuario` y `USUARIO_ACTUAL`.
-- Rutas principales: ver tabla en `README.md` (sección "Rutas principales"). `/docs` existe pero exige sesión.
+- Rutas principales: ver tabla en `README.md` (sección "Rutas principales"). `/docs` existe pero exige sesión. `/app.css` y `/app.js` son públicas (están en `RUTAS_PUBLICAS`, las usa el login). `/estado-servicio` y `/google/validar-matriz` devuelven JSON (401 sin sesión si se pide JSON).
 - Endpoints que usan Playwright sync deben ser `def` (threadpool) o hilos propios, **nunca `async def`**.
 
 ## Services
 
-`auth`, `matrix_analysis`, `drive_zip_validation`, `upload_jobs`, `history`. Reglas:
+`auth`, `matrix_analysis`, `drive_zip_validation`, `upload_jobs`, `history`, `health`. Reglas:
 - La lógica de negocio nueva va aquí, no en las rutas. Las funciones nuevas que los servicios exponen a las rutas tienen nombre en inglés (`create_analyzed_job`, `cancel_job`, ...).
 - Un servicio no importa módulos de `api/`.
 - `upload_jobs` importa `evaluative_tests.state/execution` DENTRO de `_ejecutar_test_en_cargue` a propósito: es enlace tardío y las pruebas parchean `auto_prizma.evaluative_tests.execution.ejecutar_test_job`; no subir ese import a nivel de módulo. `evaluative_tests` ya no importa `upload_jobs` (usa `services/history`), así que no hay ciclo.
 - La creación de jobs de test es única: `evaluative_tests.state.register_test_job` (la usan `/tests/analizar` y `/analizar`).
+- `health` (decisión del usuario, 2026-10-07: indicadores reales, no texto fijo): `check_chromium` pregunta a Playwright por la ruta del ejecutable (no abre el navegador; también vale `chromium_headless_shell-<rev>`), `check_prizma` hace un GET a `URL_PRIZMA` (cualquier respuesta < 500 = disponible). Cada resultado se guarda `HEALTH_CHROMIUM_TTL_SECONDS` / `HEALTH_PRIZMA_TTL_SECONDS`. Las páginas pintan lo que haya en memoria (`cached_service_status`, nunca bloquea) y `app.js` pide `/estado-servicio` al cargar y cada 5 min.
 
 ## Integrations
 
 - `integrations/google/oauth.py`: flujo OAuth web con PKCE y `state` (TTL 10 min, ligado al usuario de la sesión), scopes de solo lectura (`config.GOOGLE_SCOPES`), token por usuario en `DATA_DIR/tokens/<slug>-<hash>.json`, refresco automático, descarga de Google Docs para tests.
 - `integrations/google/drive.py`: Sheets API (enlace real de la columna G, incluidos Smart Chips; pestaña por `gid`) y Drive API en lotes (`DRIVE_BATCH_MAX`, `DRIVE_PROFUNDIDAD_MAX`). **Solo metadatos**: nunca descarga H5P/PDF.
+- `check_sheet_link(url)` (decisión del usuario, 2026-10-07): al pegar el enlace en Inicio, `app.js`/`views.py` llaman a `/google/validar-matriz`, que pide a Sheets solo `properties(title),sheets.properties(sheetId,title)` con la cuenta del usuario y responde `{ok, documento, pestana}` o `{ok: false, motivo, conectar}`. Es solo un aviso: el análisis vuelve a validar todo.
 - Cualquier integración nueva va en `integrations/<servicio>/` y lee su configuración de `core/config.py`.
 
 ## Automation
@@ -211,7 +224,7 @@ Todo en `auto_prizma/core/config.py`. Variables de entorno documentadas en `.env
 | `AUTO_PRIZMA_URL_PRIZMA` | al importar | URL de PRIZMA (vacía = producción `https://admin.prizma.site`; pruebas: `https://admin.prizma.solutions`) |
 | `GOOGLE_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` | en cada llamada | OAuth |
 
-Otros parámetros: `PRIZMA_ESPERAS_REINTENTO_SESION` (reintentos de la sesión inicial), `PRIZMA_VACIAR_HTML_CON_H5P` (política temporal del campo Html en formato H5P), `FORMATOS_RECURSO_INTERACTIVO` / `FORMATO_RECURSO_POR_DEFECTO` / `EXTENSIONES_HTML` / `PRIZMA_VACIAR_RECURSO_CON_HTML` (formato HTML), `CHROMIUM_ARGS`, `VIEWPORT_NAVEGADOR`, límites de Google/Drive.
+Otros parámetros: `PRIZMA_ESPERAS_REINTENTO_SESION` (reintentos de la sesión inicial), `PRIZMA_VACIAR_HTML_CON_H5P` (política temporal del campo Html en formato H5P), `FORMATOS_RECURSO_INTERACTIVO` / `FORMATO_RECURSO_POR_DEFECTO` / `EXTENSIONES_HTML` / `PRIZMA_VACIAR_RECURSO_CON_HTML` (formato HTML), `CHROMIUM_ARGS`, `VIEWPORT_NAVEGADOR`, límites de Google/Drive, `STATIC_DIR` / `APP_CSS_PATH` / `APP_JS_PATH` (recursos comunes de la interfaz), `HEALTH_CHROMIUM_TTL_SECONDS` / `HEALTH_PRIZMA_TTL_SECONDS` / `HEALTH_PRIZMA_TIMEOUT_SECONDS` (estado del servicio).
 
 Reglas: no leer `os.environ` fuera de `config.py`; añadir constantes nuevas (URLs, límites, timeouts) a `config.py` y a `.env.example` si son variables; mantener el "momento de lectura" al mover algo. Los timeouts de Playwright del motor siguen dispersos en `engine.py` (pendiente fase 7).
 
@@ -235,7 +248,7 @@ URL de desarrollo: `http://127.0.0.1:8000`. Para probar contra el ambiente de pr
 - Framework: **pytest** (`requirements-dev.txt`). `tests/conftest.py` fija `AUTO_PRIZMA_DATA_DIR` en una carpeta temporal y crea el usuario `adminlocal`. PRIZMA y Playwright están simulados (`unittest.mock.patch`).
 
 ```powershell
-python -m pytest -q                                   # todo (≈45 s, 228 pruebas al 2026-10-07)
+python -m pytest -q                                   # todo (≈50 s, 266 pruebas al 2026-10-07)
 python -m pytest tests/test_test_parser.py -q         # un archivo
 python -m pytest tests/test_automation.py -k nombre   # una prueba
 ```
@@ -244,6 +257,7 @@ python -m pytest tests/test_automation.py -k nombre   # una prueba
 - **Pruebas de caracterización** (`test_engine_characterization.py`, `test_drive_resource_policy.py`): fijan el comportamiento ACTUAL (lectura de matriz, tipo de archivo, índice ZIP, `resolver_recurso`, CSV, reglas de Retos, emparejamiento Drive↔ZIP). Si fallan tras un refactor, el refactor cambió comportamiento: no "arreglar" la prueba sin decidirlo explícitamente. Usan las funciones originales del motor guardadas en `engine_overrides` (`_LEER_ACTIVIDADES_EXCEL_ORIGINAL`, `_RESOLVER_RECURSO_ORIGINAL`), porque al importar `main` el motor queda parcheado.
 - Sin cobertura: el motor de cargue real contra PRIZMA, OAuth real, Drive real y la prevalidación Drive↔ZIP en modo link (`_prevalidar_recursos_drive_zip_ultrarapido`, requiere Google).
 - `/analizar` escribe en `uploads/` y `temp/` reales (dependen de `BASE_DIR`, no de `AUTO_PRIZMA_DATA_DIR`): las pruebas que lo llamen deben borrar lo que crean (ver la fixture `limpiar_trabajos` en `tests/test_analysis_flow.py`).
+- Interfaz: `test_layout.py` (marco en todas las páginas, recursos públicos, contrato de campos del formulario de Inicio), `test_reports_pages.py`, `test_health.py`, `test_sheet_link_check.py`. Para revisar el aspecto: levantar una segunda instancia con `AUTO_PRIZMA_DATA_DIR` temporal (usuario y reportes de ejemplo) en otro puerto y sacar capturas con Playwright en claro/oscuro a 1600 y 400 px; comprobar que `document.documentElement.scrollWidth` no supere el ancho de la ventana.
 - Verificación adicional tras refactors: `python -m compileall -q main.py auto_prizma scripts tests` y arrancar uvicorn comprobando `/login` (200) y `/` (303 → `/login`).
 
 ## Seguridad
@@ -331,7 +345,7 @@ git fetch origin; git rev-list --count HEAD..origin/main   # ¿rama atrasada?
 
 ## Problemas conocidos
 
-- **Monkeypatching del motor** (`engine_overrides.py`) y del botón "Test" (`evaluative_tests/views.py::_patch_main_nav`, vía `sys.modules.get("auto_prizma.api.routes.uploads")`): acople oculto; si se mueve el código parcheado, el parche deja de aplicarse sin error visible.
+- **Monkeypatching del motor** (`engine_overrides.py`): acople oculto; si se mueve el código parcheado, el parche deja de aplicarse sin error visible. (El parche del botón "Test", `_patch_main_nav`, se eliminó el 2026-10-07: el marco común ya incluye "Test" en todas las páginas.)
 - **Sin confirmar: cuándo borra PRIZMA el archivo de "Recurso"** (2026-10-07). Si la papelera lo borra en el servidor al pulsar Eliminar (y no al guardar), un fallo posterior (pegado o guardado) deja la actividad sin archivo y sin HTML aunque el reporte diga "No se guardo nada". Se arregla volviendo a cargarla en formato HTML (ya no habrá archivo que quitar). Para reducir el riesgo, el `.html` se lee y valida antes de quitar nada.
 - **`ERROR_PATCH_NO_CONFIRMADO` en actividades con campo Html** (causa encontrada el 2026-10-06): PRIZMA no envía el guardado si el campo "Html" tiene contenido y se sube un H5P. Ahora se vacía el Html (política temporal, ver PRIZMA). Si vuelve a aparecer `ERROR_PATCH_NO_CONFIRMADO`, el mensaje trae el diagnóstico y la captura `temp/<trabajo>/sin_patch_fila_<n>.png`.
 - **`print()` con caracteres no ASCII en el motor** (`→`, emojis): si la salida estándar no es UTF-8 (Windows con la salida redirigida a archivo/pipe, p. ej. `uvicorn ... > log.txt`), `resolver_recurso` y otras funciones lanzan `UnicodeEncodeError` en pleno cargue. En Railway (Linux) no ocurre. Mitigación local: `$env:PYTHONIOENCODING = "utf-8"`. Corrección pendiente (fase 7: logging en lugar de `print`).
@@ -342,8 +356,9 @@ git fetch origin; git rev-list --count HEAD..origin/main   # ¿rama atrasada?
 - `/cargue-actual` muestra cargues activos de **todos** los usuarios (las acciones sí exigen ser el dueño), aunque el README dice "del usuario".
 - Docstring de `_resolver_hoja_objetivo` (`integrations/google/drive.py`) dice que sin `gid` devuelve `None`, pero lanza `ValueError`.
 - Código sin uso: `prevalidar_recursos_drive_zip` del motor; scraping público de Drive del motor (anulado por el override); `BackgroundTasks` en `/iniciar`; variable `programa_sugerido` en `evaluative_tests/views.py`. (En la fase 5 se eliminaron 5 funciones muertas y el índice "flexible" de `drive_zip_validation.py`.)
-- Archivos grandes pendientes de dividir: `engine.py` (~5800), `web/views.py` (~1500), `evaluative_tests/automation.py` (~1090), `integrations/google/drive.py` (~920), `evaluative_tests/routes.py` (~910), `services/upload_jobs.py` (~700; candidato: separar creación de trabajos y cola), `services/drive_zip_validation.py` (~680).
-- Duplicaciones pendientes: layout HTML (barra lateral/estilos) copiado en varias páginas; lógica de login en PRIZMA repetida (motor, validación y tests evaluativos). Nombres de archivo: el nombre base y la clave exacta ya están unificados en `domain/file_names.py`; quedan dos normalizaciones con semántica DISTINTA a propósito — `engine.clave_nombre_archivo_exacto` (ignora mayúsculas) y `drive_resource_policy._normalized_name` (canónica: guiones, espacios y mayúsculas). Unificarlas cambiaría qué archivos se emparejan: requiere decisión del usuario.
+- Archivos grandes pendientes de dividir: `engine.py` (~5800), `web/views.py` (~1300, la mitad es CSS/JS propio de Inicio), `evaluative_tests/automation.py` (~1090), `integrations/google/drive.py` (~920), `evaluative_tests/routes.py` (~910), `services/upload_jobs.py` (~700; candidato: separar creación de trabajos y cola), `services/drive_zip_validation.py` (~680).
+- Duplicaciones pendientes: lógica de login en PRIZMA repetida (motor, validación y tests evaluativos). Nombres de archivo: el nombre base y la clave exacta ya están unificados en `domain/file_names.py`; quedan dos normalizaciones con semántica DISTINTA a propósito — `engine.clave_nombre_archivo_exacto` (ignora mayúsculas) y `drive_resource_policy._normalized_name` (canónica: guiones, espacios y mayúsculas). Unificarlas cambiaría qué archivos se emparejan: requiere decisión del usuario.
+- **Interfaz**: en las capturas de página completa el fondo blanco del menú lateral termina a la altura de la ventana (el menú es `sticky`); en el navegador no se nota. El módulo de tests conserva su propio CSS (en `evaluative_tests/views.py`, ya con variables de color) con reglas globales (`button`, `input`, `label`, `p`): los controles del marco usan selectores más específicos para no heredarlas.
 - `.venv` local creado antes de que `main` añadiera `python-docx`: ejecutar `python -m pip install -r requirements-dev.txt` o la app no arranca.
 
 ## Decisiones arquitectónicas
@@ -359,6 +374,6 @@ git fetch origin; git rev-list --count HEAD..origin/main   # ¿rama atrasada?
 - **Google solo lectura y solo metadatos**; token por usuario.
 - **Sesión con cookie HMAC sin estado** y usuarios en JSON local gestionados por CLI.
 - **Un hilo + un Chromium por cargue**, máximo 2 simultáneos; cancelación cooperativa entre actividades.
-- **HTML renderizado en servidor** con CSS común en `/estilos-responsive.css` y tema oscuro.
+- **HTML renderizado en servidor con un marco común** (`web/layout.py`) y recursos estáticos versionados (`static/app.css`, `static/app.js`). Tema claro/oscuro por variables CSS, recordado en el navegador (`localStorage` `autoPrizmaTema`). Diseño según las imágenes del usuario (2026-10-07).
 - **Hora de Colombia** para historial y nombres de reporte.
 - **Formato HTML reutilizando el flujo del H5P**: solo cambia el paso de carga (pegar en el campo Html en lugar de subir el archivo); emparejamiento, reporte, historial, cancelación y reintentos son los mismos. El código nuevo de bajo nivel vive en `automation/prizma/html_field.py`, sin dependencias del motor.

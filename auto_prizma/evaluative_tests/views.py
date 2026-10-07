@@ -1,7 +1,7 @@
-"""HTML del modulo de tests: layout, revision del documento y tarjeta de estado.
+"""HTML del modulo de tests: revision del documento y tarjeta de estado.
 
-_patch_main_nav agrega el boton Test al menu de /cargue-actual
-(auto_prizma/api/routes/uploads.py) en memoria.
+_layout arma cada pagina con el marco comun (auto_prizma/web/layout.py), que
+ya incluye "Test" en el menu de todas las paginas.
 """
 
 from __future__ import annotations
@@ -9,11 +9,9 @@ from __future__ import annotations
 import html
 import json
 import re
-import sys
-
-from fastapi.responses import HTMLResponse
 
 from auto_prizma.core.config import PRIZMA_HOST
+from auto_prizma.web.layout import render_page
 
 from .models import Severity, document_to_dict
 from .validation import validate_document
@@ -23,256 +21,122 @@ from .state import (
 )
 
 
-def _patch_main_nav():
-    """Garantiza en memoria que el botón Test aparezca en /cargue-actual sin tocar auto_prizma/api/routes/uploads.py."""
-    main_mod = sys.modules.get("auto_prizma.api.routes.uploads")
-    if not main_mod:
-        return
+# Estilos propios del modulo (el marco y los colores comunes estan en static/app.css).
+_CSS_TESTS = r"""
+.contenido{--morado:var(--boton);--amarillo:var(--ambar)}
+.layout-tests{display:grid;grid-template-columns:1fr 340px;gap:24px;align-items:start}
+.panel{padding:26px;margin-bottom:18px}
+.panel-ayuda{padding:24px;background:var(--panel);border:1px solid var(--borde);border-radius:18px}
+.panel-ayuda h3{margin:0 0 18px;font-size:17px;color:var(--texto)}
+.paso-ayuda{display:grid;grid-template-columns:30px 1fr;gap:12px;align-items:start;margin-bottom:16px;color:var(--texto-2);font-size:13px;line-height:1.5}
+.paso-ayuda b{width:28px;height:28px;border-radius:50%;background:var(--acento-suave);color:var(--acento-texto);display:grid;place-items:center;font-size:13px;font-weight:800}
+.ayuda-separador{height:1px;background:var(--borde);margin:22px 0}
+.titulo-consejos{color:var(--acento-texto);font-size:16px;margin:0 0 12px}
+.consejo{color:var(--texto-2);font-size:13px;line-height:1.55;margin:0 0 10px}
+h1{margin:0 0 8px;font-size:29px}
+h2{margin:0 0 12px;font-size:20px}
+p{color:var(--muted);line-height:1.5;margin:0 0 14px}
+.pasos{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 24px}
+.paso{padding:8px 14px;border-radius:999px;background:var(--acento-suave);color:var(--acento-texto);font-size:12px;font-weight:800}
+.dropzone{display:grid;place-items:center;border:2px dashed var(--acento-borde);border-radius:14px;padding:32px 20px;text-align:center;background:var(--panel-2);cursor:pointer;transition:all .2s}
+.dropzone:hover,.dropzone.dragover{border-color:var(--acento);background:var(--acento-suave)}
+input,textarea,select{width:100%;border:1px solid var(--borde-2);border-radius:10px;padding:11px 13px;font:inherit;color:inherit;background:var(--panel)}
+textarea{min-height:78px;resize:vertical}
+label{display:block;font-size:12px;font-weight:800;margin:13px 0 6px;color:var(--texto-2)}
+button,.boton{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:10px;padding:12px 18px;background:var(--morado);color:#fff;font-weight:800;font-size:14px;text-decoration:none;cursor:pointer}
+button:hover,.boton:hover{opacity:.93}
+button.secundario,.boton.secundario{background:var(--panel);color:var(--acento-texto);border:1px solid var(--acento-borde)}
+.boton.secundario.peligro{border-color:var(--rojo-borde);color:var(--rojo)}
+.acciones{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}
+.test-card{border:1px solid var(--borde);border-radius:16px;padding:22px;margin-top:18px;background:var(--panel-2);box-shadow:0 4px 12px rgba(0,0,0,.02)}
+.section{border-left:4px solid var(--acento);padding-left:16px;margin:20px 0}
+.question{background:var(--panel);border:1px solid var(--borde);border-radius:12px;padding:16px;margin:14px 0;transition:all .2s;scroll-margin-top:24px}
+.question.question-error{border:2px solid #f04438 !important;background:var(--rojo-suave) !important;box-shadow:0 0 0 4px rgba(240,68,56,.12)}
+.badge{display:inline-block;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:800;margin:3px 6px 3px 0}
+.badge.ok{background:var(--verde-suave);color:var(--verde)}
+.badge.warn{background:var(--ambar-suave);color:var(--ambar)}
+.badge.error{background:var(--rojo-suave);color:var(--rojo)}
+.issue{padding:12px 14px;border-radius:10px;margin:8px 0;font-size:13px;line-height:1.5}
+.issue.error{background:var(--rojo-suave);color:var(--rojo);border:1px solid var(--rojo-borde)}
+.issue.warning{background:var(--ambar-suave);color:var(--ambar);border:1px solid var(--ambar-borde)}
+.issue.ok{background:var(--verde-suave);color:var(--verde);border:1px solid var(--verde-borde)}
+.issue-link{color:var(--acento-texto)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.option-row,.pair-row{display:grid;grid-template-columns:42px 1fr auto;gap:10px;align-items:center;margin-top:8px}
+.pair-row{grid-template-columns:1fr 1fr}
+.muted{color:var(--muted);font-size:12px}
+@media(max-width:1100px){.layout-tests{grid-template-columns:1fr}.panel-ayuda{order:2}}
+@media(max-width:900px){.grid2{grid-template-columns:1fr}}
 
-    orig_vacio = getattr(main_mod, "_pagina_sin_cargue_actual", None)
-    if orig_vacio and not getattr(orig_vacio, "_ap_patched", False):
-        def nuevo_vacio(*args, **kwargs):
-            resp = orig_vacio(*args, **kwargs)
-            if hasattr(resp, "body"):
-                body_str = resp.body.decode("utf-8")
-                if 'href="/tests"' not in body_str and '<a class="nav-item activo" href="/cargue-actual">' in body_str:
-                    body_str = body_str.replace(
-                        '<a class="nav-item activo" href="/cargue-actual">',
-                        '<a class="nav-item" href="/tests">▣ <span>Test</span></a><a class="nav-item activo" href="/cargue-actual">'
-                    )
-                    return HTMLResponse(body_str, status_code=resp.status_code)
-            return resp
-        nuevo_vacio._ap_patched = True
-        setattr(main_mod, "_pagina_sin_cargue_actual", nuevo_vacio)
+/* ---- Estados dinamicos reutilizables (banners, kpis, badges, tarjeta en vivo) ---- */
+.status-banner{display:flex;gap:14px;align-items:flex-start;margin-bottom:20px;border-radius:14px;padding:20px;border:2px solid transparent;box-shadow:0 4px 12px rgba(0,0,0,.06)}
+.status-banner .status-icon{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-size:22px;font-weight:900;flex-shrink:0;background:var(--panel)}
+.status-banner h3{margin:0 0 6px;font-size:17px;font-weight:800}
+.status-banner p{margin:0 0 12px;font-size:14px;line-height:1.5;color:var(--texto-2)}
+.status-banner .acciones{margin-top:0}
+.status-banner--ok{background:var(--verde-suave);border-color:var(--verde-borde)}
+.status-banner--ok .status-icon,.status-banner--ok h3,.status-banner--ok p{color:var(--verde)}
+.status-banner--error{background:var(--rojo-suave);border-color:var(--rojo-borde)}
+.status-banner--error .status-icon,.status-banner--error h3{color:var(--rojo)}
+.status-banner--warn{background:var(--ambar-suave);border-color:var(--ambar-borde)}
+.status-banner--warn .status-icon,.status-banner--warn h3{color:var(--ambar)}
 
-    orig_cargue = getattr(main_mod, "cargue_actual", None)
-    if orig_cargue and not getattr(orig_cargue, "_ap_patched", False):
-        def nuevo_cargue(*args, **kwargs):
-            resp = orig_cargue(*args, **kwargs)
-            if hasattr(resp, "body"):
-                body_str = resp.body.decode("utf-8")
-                if 'href="/tests"' not in body_str and '<a class="nav-item activo" href="/cargue-actual">' in body_str:
-                    body_str = body_str.replace(
-                        '<a class="nav-item activo" href="/cargue-actual">',
-                        '<a class="nav-item" href="/tests">▣ <span>Test</span></a><a class="nav-item activo" href="/cargue-actual">'
-                    )
-                    return HTMLResponse(body_str, status_code=resp.status_code)
-            return resp
-        nuevo_cargue._ap_patched = True
-        app = getattr(main_mod, "app", None)
-        if app:
-            for route in app.routes:
-                if getattr(route, "path", None) == "/cargue-actual":
-                    route.endpoint = nuevo_cargue
-        setattr(main_mod, "cargue_actual", nuevo_cargue)
+.kpi-card{background:var(--panel);border:1px solid var(--borde);border-radius:12px;padding:16px;box-shadow:var(--sombra-sm)}
+.kpi-card .kpi-label{font-size:12px;font-weight:700;text-transform:uppercase;color:var(--muted)}
+.kpi-card .kpi-valor{font-size:28px;font-weight:900;margin-top:4px;color:var(--texto)}
+.kpi-card--ok{background:var(--verde-suave);border-color:var(--verde-borde)}
+.kpi-card--ok .kpi-label,.kpi-card--ok .kpi-valor{color:var(--verde)}
+.kpi-card--warn{background:var(--ambar-suave);border-color:var(--ambar-borde)}
+.kpi-card--warn .kpi-label,.kpi-card--warn .kpi-valor{color:var(--ambar)}
+.kpi-card--error{background:var(--rojo-suave);border-color:var(--rojo-borde)}
+.kpi-card--error .kpi-label,.kpi-card--error .kpi-valor{color:var(--rojo)}
 
+.badge-dinamico{display:inline-block;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:800}
+.badge-dinamico--pendiente{background:var(--panel-2);color:var(--texto-2)}
+.badge-dinamico--proceso{background:var(--ambar-suave);color:var(--ambar)}
+.badge-dinamico--ok{background:var(--verde-suave);color:var(--verde)}
+.badge-dinamico--error{background:var(--rojo-suave);color:var(--rojo)}
+.badge-dinamico--detenido{background:var(--panel-2);color:var(--muted)}
 
-_patch_main_nav()
+.live-card{border-radius:16px;padding:20px 24px;box-shadow:0 4px 14px rgba(0,0,0,.04);border:2px solid transparent;margin-bottom:24px;transition:all .3s ease}
+.live-card--running{background:var(--acento-suave);border-color:var(--acento)}
+.live-card--waiting{background:var(--rojo-suave);border-color:#ef4444}
+.live-card h3{margin:0;font-size:16px;font-weight:800;color:var(--texto)}
+.live-card p{margin:3px 0 0;font-size:13px;color:var(--muted)}
+
+.progress-track{background:var(--borde);border-radius:999px;height:9px;overflow:hidden}
+.progress-fill{background:linear-gradient(90deg,#5548e8,#818cf8);height:100%;transition:width .4s ease}
+
+.mode-option{flex:1;min-width:180px;border:1px solid var(--borde);border-radius:12px;padding:14px;cursor:pointer;background:var(--panel);transition:all .2s}
+.mode-option strong{margin-left:7px;font-size:14px}
+.mode-option span{display:block;margin:5px 0 0 25px;color:var(--muted);font-size:12px}
+.mode-option--activo{border-color:var(--acento);background:var(--acento-suave)}
+
+.alert-soft{margin-top:14px;border-radius:12px;padding:14px;display:flex;gap:12px;align-items:center}
+.alert-soft--ok{background:var(--verde-suave);border:1px solid var(--verde-borde);color:var(--verde)}
+.alert-soft--warn{background:var(--ambar-suave);border:1px solid var(--ambar-borde);color:var(--ambar);align-items:flex-start}
+.alert-soft a{color:var(--acento-texto);font-weight:700}
+
+.test-card-header{background:var(--panel-2);border-bottom:1px solid var(--borde)}
+.chip-morado{display:inline-block;font-size:12px;background:var(--acento-suave);padding:3px 8px;border-radius:6px;color:var(--acento-texto);font-weight:600}
+.bloque-prizma{margin-top:28px;border:2px solid var(--acento) !important;background:var(--acento-suave) !important;scroll-margin-top:24px}
+
+#btn-guardar-correcciones.is-dirty{background:#e11d48 !important;color:#fff !important;font-weight:800;box-shadow:0 0 0 4px rgba(225,29,72,.35)}
+"""
+
+# Etiqueta del menu -> clave de web/layout.NAV_ITEMS (los llamadores pasan la etiqueta).
+_CLAVES_MENU = {
+    "Inicio": "inicio",
+    "Test": "test",
+    "Cargue actual": "cargue",
+    "Historial": "historial",
+    "Reportes": "reportes",
+    "Mi contraseña": "clave",
+}
 
 
 def _layout(title: str, body: str, active: str = "Test") -> str:
-    _patch_main_nav()
-    nav = "".join(
-        f'<a class="nav-item {"activo" if label == active else ""}" href="{href}">{icon}<span>{label}</span></a>'
-        for label, href, icon in [
-            ("Inicio", "/", "⌂"),
-            ("Test", "/tests", "▣"),
-            ("Cargue actual", "/cargue-actual", "⇧"),
-            ("Historial", "/historial", "◷"),
-            ("Reportes", "/reportes", "▥"),
-            ("Mi contraseña", "/cambiar-clave", "✎"),
-            ("Salir", "/salir", "⏻"),
-        ]
-    )
-    return f'''<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)} - Auto Prizma Pro</title><style>
-:root{{--fondo:#f7f8fc;--texto:#101828;--muted:#667085;--borde:#e5e7ef;--morado:#5548e8;--verde:#087f5b;--rojo:#b42318;--amarillo:#9a6700;--sombra:0 10px 30px rgba(29,41,57,.05)}}
-*{{box-sizing:border-box}}
-body{{margin:0;background:var(--fondo);color:var(--texto);font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}}
-.app{{min-height:100vh;display:grid;grid-template-columns:235px 1fr}}
-.sidebar{{position:sticky;top:0;height:100vh;background:#fff;border-right:1px solid var(--borde);padding:28px 20px;display:flex;flex-direction:column}}
-.marca{{display:flex;align-items:center;gap:12px;margin-bottom:34px}}
-.marca strong{{display:block;font-size:18px}}
-.marca span{{display:block;color:var(--muted);font-size:12px;margin-top:3px}}
-.logo{{width:44px;height:44px;border-radius:13px;display:grid;place-items:center;background:linear-gradient(145deg,#6d5dfc,#4338ca);color:#fff;font-weight:900;font-size:22px;box-shadow:0 8px 20px rgba(79,70,229,.25)}}
-.nav{{display:grid;gap:8px}}
-.nav-item{{padding:12px 14px;border-radius:11px;color:#475467;font-size:14px;display:flex;gap:11px;align-items:center;text-decoration:none}}
-.nav-item.activo,.nav-item:hover{{background:#f1efff;color:#4f46e5;font-weight:700}}
-.contenido{{padding:34px 38px;min-width:0}}
-.layout-tests{{display:grid;grid-template-columns:1fr 340px;gap:24px;align-items:start}}
-.panel{{background:#fff;border:1px solid var(--borde);border-radius:18px;box-shadow:var(--sombra);padding:26px;margin-bottom:18px}}
-.panel-ayuda{{padding:24px;background:#fff;border:1px solid var(--borde);border-radius:18px}}
-.panel-ayuda h3{{margin:0 0 18px;font-size:17px;color:#101828}}
-.paso-ayuda{{display:grid;grid-template-columns:30px 1fr;gap:12px;align-items:start;margin-bottom:16px;color:#475467;font-size:13px;line-height:1.5}}
-.paso-ayuda b{{width:28px;height:28px;border-radius:50%;background:#f1efff;color:#4f46e5;display:grid;place-items:center;font-size:13px;font-weight:800}}
-.ayuda-separador{{height:1px;background:var(--borde);margin:22px 0}}
-.titulo-consejos{{color:#4f46e5;font-size:16px;margin:0 0 12px}}
-.consejo{{color:#475467;font-size:13px;line-height:1.55;margin:0 0 10px}}
-h1{{margin:0 0 8px;font-size:29px}}
-h2{{margin:0 0 12px;font-size:20px}}
-p{{color:var(--muted);line-height:1.5;margin:0 0 14px}}
-.pasos{{display:flex;gap:8px;flex-wrap:wrap;margin:18px 0 24px}}
-.paso{{padding:8px 14px;border-radius:999px;background:#f1efff;color:#5548e8;font-size:12px;font-weight:800}}
-.dropzone{{display:grid;place-items:center;border:2px dashed #b8b3f8;border-radius:14px;padding:32px 20px;text-align:center;background:#fbfaff;cursor:pointer;transition:all .2s}}
-.dropzone:hover,.dropzone.dragover{{border-color:#5548e8;background:#f4f2ff}}
-input,textarea,select{{width:100%;border:1px solid #d0d5dd;border-radius:10px;padding:11px 13px;font:inherit;color:inherit;background:#fff}}
-textarea{{min-height:78px;resize:vertical}}
-label{{display:block;font-size:12px;font-weight:800;margin:13px 0 6px;color:#344054}}
-button,.boton{{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:10px;padding:12px 18px;background:var(--morado);color:#fff;font-weight:800;font-size:14px;text-decoration:none;cursor:pointer}}
-button:hover,.boton:hover{{opacity:.93}}
-button.secundario,.boton.secundario{{background:#fff;color:#5548e8;border:1px solid #c7c2ff}}
-.acciones{{display:flex;gap:12px;flex-wrap:wrap;margin-top:22px}}
-.test-card{{border:1px solid var(--borde);border-radius:16px;padding:22px;margin-top:18px;background:#fcfcff;box-shadow:0 4px 12px rgba(0,0,0,.02)}}
-.section{{border-left:4px solid #7c6dfc;padding-left:16px;margin:20px 0}}
-.question{{background:#fff;border:1px solid var(--borde);border-radius:12px;padding:16px;margin:14px 0;transition:all .2s;scroll-margin-top:24px}}
-.question.question-error{{border:2px solid #f04438 !important;background:#fffbfa !important;box-shadow:0 0 0 4px rgba(240,68,56,0.12);}}
-.badge{{display:inline-block;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:800;margin:3px 6px 3px 0}}
-.badge.ok{{background:#ecfdf3;color:var(--verde)}}
-.badge.warn{{background:#fff8e1;color:var(--amarillo)}}
-.badge.error{{background:#fef3f2;color:var(--rojo)}}
-.issue{{padding:12px 14px;border-radius:10px;margin:8px 0;font-size:13px;line-height:1.5}}
-.issue.error{{background:#fef3f2;color:var(--rojo);border:1px solid #fecdca}}
-.issue.warning{{background:#fff8e1;color:var(--amarillo);border:1px solid #fedf89}}
-.issue.ok{{background:#ecfdf3;color:var(--verde);border:1px solid #a6f4c5}}
-.grid2{{display:grid;grid-template-columns:1fr 1fr;gap:14px}}
-.option-row,.pair-row{{display:grid;grid-template-columns:42px 1fr auto;gap:10px;align-items:center;margin-top:8px}}
-.pair-row{{grid-template-columns:1fr 1fr}}
-.muted{{color:var(--muted);font-size:12px}}
-@media(max-width:1100px){{.layout-tests{{grid-template-columns:1fr}}.panel-ayuda{{order:2}}}}
-@media(max-width:900px){{.app{{grid-template-columns:1fr}}.sidebar{{display:none}}.contenido{{padding:20px}}.grid2{{grid-template-columns:1fr}}}}
-.estado-servicio{{margin-top:auto;border:1px solid var(--borde);border-radius:14px;padding:15px}}
-.servicio-linea{{font-size:12px;font-weight:800;color:#07894f;margin-bottom:14px}}
-.punto{{width:8px;height:8px;background:#12b76a;border-radius:50%;display:inline-block;margin-right:7px}}
-.servicio-mini{{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--muted);margin-top:10px}}
-.chip{{background:#eef2ff;color:#4f46e5;border-radius:999px;padding:4px 8px}}
-html[data-theme="dark"] .test-card,
-html[data-theme="dark"] .panel-ayuda,
-html[data-theme="dark"] .question,
-html[data-theme="dark"] .dropzone {{
-  background: #111827 !important;
-  color: #e5e7eb !important;
-  border-color: #263244 !important;
-}}
-html[data-theme="dark"] .question.question-error {{
-  background: #2a1a1a !important;
-  border-color: #f04438 !important;
-}}
-html[data-theme="dark"] .section {{ border-left-color: #6d5dfc !important; }}
-html[data-theme="dark"] .titulo-consejos,
-html[data-theme="dark"] .paso-ayuda,
-html[data-theme="dark"] .consejo,
-html[data-theme="dark"] .muted {{ color: #aeb9ca !important; }}
-html[data-theme="dark"] .ayuda-separador {{ background: #263244 !important; }}
-html[data-theme="dark"] .issue.error {{ background: #2a1a1a !important; border-color: #633 !important; }}
-html[data-theme="dark"] .issue.warning {{ background: #2a2210 !important; border-color: #7a5c00 !important; }}
-html[data-theme="dark"] .issue.ok {{ background: #103322 !important; border-color: #0a5c3a !important; }}
-html[data-theme="dark"] .badge.ok {{ background: #103322 !important; }}
-html[data-theme="dark"] .badge.warn {{ background: #2a2210 !important; }}
-html[data-theme="dark"] .badge.error {{ background: #2a1a1a !important; }}
-
-/* ---- Estados dinamicos reutilizables (banners, kpis, badges, tarjeta en vivo) ---- */
-.status-banner{{display:flex;gap:14px;align-items:flex-start;margin-bottom:20px;border-radius:14px;padding:20px;border:2px solid transparent;box-shadow:0 4px 12px rgba(0,0,0,.06)}}
-.status-banner .status-icon{{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;font-size:22px;font-weight:900;flex-shrink:0}}
-.status-banner h3{{margin:0 0 6px;font-size:17px;font-weight:800}}
-.status-banner p{{margin:0 0 12px;font-size:14px;line-height:1.5}}
-.status-banner .acciones{{margin-top:0}}
-.status-banner--ok{{background:#f6fef9;border-color:#a6f4c5}}
-.status-banner--ok .status-icon{{background:#d1fadf;color:#027a48}}
-.status-banner--ok h3,.status-banner--ok p{{color:#027a48}}
-.status-banner--error{{background:#fffbfa;border-color:#fecdca}}
-.status-banner--error .status-icon{{background:#fee4e2;color:#d92d20}}
-.status-banner--error h3{{color:#b42318}}
-.status-banner--error p{{color:#7a271a}}
-.status-banner--warn{{background:#fffcf5;border-color:#fedf89}}
-.status-banner--warn .status-icon{{background:#fef0c7;color:#b54708}}
-.status-banner--warn h3{{color:#92400e}}
-.status-banner--warn p{{color:#78350f}}
-
-.kpi-card{{background:#fff;border:1px solid var(--borde);border-radius:12px;padding:16px;box-shadow:0 1px 3px rgba(16,24,40,.05)}}
-.kpi-card .kpi-label{{font-size:12px;font-weight:700;text-transform:uppercase;color:var(--muted)}}
-.kpi-card .kpi-valor{{font-size:28px;font-weight:900;margin-top:4px;color:var(--texto)}}
-.kpi-card--ok{{background:#f6fef9;border-color:#a6f4c5}}
-.kpi-card--ok .kpi-label,.kpi-card--ok .kpi-valor{{color:#027a48}}
-.kpi-card--warn{{background:#fffcf5;border-color:#fedf89}}
-.kpi-card--warn .kpi-label,.kpi-card--warn .kpi-valor{{color:#b54708}}
-.kpi-card--error{{background:#fffbfa;border-color:#fecdca}}
-.kpi-card--error .kpi-label,.kpi-card--error .kpi-valor{{color:#b42318}}
-
-.badge-dinamico{{display:inline-block;border-radius:999px;padding:5px 10px;font-size:12px;font-weight:800}}
-.badge-dinamico--pendiente{{background:#f2f4f7;color:#344054}}
-.badge-dinamico--proceso{{background:#fef0c7;color:#b54708}}
-.badge-dinamico--ok{{background:#ecfdf3;color:#087f5b}}
-.badge-dinamico--error{{background:#fef3f2;color:#b42318}}
-.badge-dinamico--detenido{{background:#e5e7eb;color:#374151}}
-
-.live-card{{border-radius:16px;padding:20px 24px;box-shadow:0 4px 14px rgba(0,0,0,.04);border:2px solid transparent;margin-bottom:24px;transition:all .3s ease}}
-.live-card--running{{background:#fbfaff;border-color:#6366f1}}
-.live-card--waiting{{background:#fef2f2;border-color:#ef4444}}
-.live-card h3{{margin:0;font-size:16px;font-weight:800;color:var(--texto)}}
-.live-card p{{margin:3px 0 0;font-size:13px;color:var(--muted)}}
-
-.progress-track{{background:#e2e8f0;border-radius:999px;height:9px;overflow:hidden}}
-.progress-fill{{background:linear-gradient(90deg,#5548e8,#818cf8);height:100%;transition:width .4s ease}}
-
-.mode-option{{flex:1;min-width:180px;border:1px solid var(--borde);border-radius:12px;padding:14px;cursor:pointer;background:#fff;transition:all .2s}}
-.mode-option strong{{margin-left:7px;font-size:14px}}
-.mode-option span{{display:block;margin:5px 0 0 25px;color:var(--muted);font-size:12px}}
-.mode-option--activo{{border-color:#5548e8;background:#f8f7ff}}
-
-.alert-soft{{margin-top:14px;border-radius:12px;padding:14px;display:flex;gap:12px;align-items:center}}
-.alert-soft--ok{{background:#ecfdf3;border:1px solid #a6f4c5;color:#027a48}}
-.alert-soft--warn{{background:#fff8df;border:1px solid #f5c451;color:#7a4b00;align-items:flex-start}}
-.alert-soft a{{color:#4f46e5;font-weight:700}}
-
-.test-card-header{{background:#f8f9fc;border-bottom:1px solid #edeafc}}
-.chip-morado{{display:inline-block;font-size:12px;background:#edeafc;padding:3px 8px;border-radius:6px;color:#4338ca;font-weight:600}}
-
-#btn-guardar-correcciones.is-dirty{{background:#e11d48 !important;color:#fff !important;font-weight:800;box-shadow:0 0 0 4px rgba(225,29,72,.35)}}
-
-html[data-theme="dark"] .status-banner--ok{{background:#0b2318 !important;border-color:#0a5c3a !important}}
-html[data-theme="dark"] .status-banner--ok h3,html[data-theme="dark"] .status-banner--ok p{{color:#86efac !important}}
-html[data-theme="dark"] .status-banner--error{{background:#2a1a1a !important;border-color:#633 !important}}
-html[data-theme="dark"] .status-banner--error h3{{color:#fca5a5 !important}}
-html[data-theme="dark"] .status-banner--error p{{color:#fecaca !important}}
-html[data-theme="dark"] .status-banner--warn{{background:#2a2210 !important;border-color:#7a5c00 !important}}
-html[data-theme="dark"] .status-banner--warn h3{{color:#fbbf24 !important}}
-html[data-theme="dark"] .status-banner--warn p{{color:#fde68a !important}}
-
-html[data-theme="dark"] .kpi-card{{background:#111827 !important;border-color:#263244 !important}}
-html[data-theme="dark"] .kpi-card .kpi-label{{color:#aeb9ca !important}}
-html[data-theme="dark"] .kpi-card .kpi-valor{{color:#f3f4f6 !important}}
-html[data-theme="dark"] .kpi-card--ok{{background:#0b2318 !important;border-color:#0a5c3a !important}}
-html[data-theme="dark"] .kpi-card--ok .kpi-label,html[data-theme="dark"] .kpi-card--ok .kpi-valor{{color:#4ade80 !important}}
-html[data-theme="dark"] .kpi-card--warn{{background:#2a2210 !important;border-color:#7a5c00 !important}}
-html[data-theme="dark"] .kpi-card--warn .kpi-label,html[data-theme="dark"] .kpi-card--warn .kpi-valor{{color:#fbbf24 !important}}
-html[data-theme="dark"] .kpi-card--error{{background:#2a1a1a !important;border-color:#633 !important}}
-html[data-theme="dark"] .kpi-card--error .kpi-label,html[data-theme="dark"] .kpi-card--error .kpi-valor{{color:#fca5a5 !important}}
-
-html[data-theme="dark"] .badge-dinamico--pendiente{{background:#1f2937 !important;color:#cbd5e1 !important}}
-html[data-theme="dark"] .badge-dinamico--proceso{{background:#2a2210 !important;color:#fbbf24 !important}}
-html[data-theme="dark"] .badge-dinamico--ok{{background:#0b2318 !important;color:#4ade80 !important}}
-html[data-theme="dark"] .badge-dinamico--error{{background:#2a1a1a !important;color:#fca5a5 !important}}
-html[data-theme="dark"] .badge-dinamico--detenido{{background:#263244 !important;color:#cbd5e1 !important}}
-
-html[data-theme="dark"] .live-card--running{{background:#111827 !important;border-color:#6d5dfc !important}}
-html[data-theme="dark"] .live-card--waiting{{background:#2a1a1a !important;border-color:#ef4444 !important}}
-
-html[data-theme="dark"] .mode-option{{background:#111827 !important;border-color:#263244 !important;color:#e5e7eb !important}}
-html[data-theme="dark"] .mode-option span{{color:#aeb9ca !important}}
-html[data-theme="dark"] .mode-option--activo{{background:#1d2540 !important;border-color:#818cf8 !important}}
-
-html[data-theme="dark"] .alert-soft--ok{{background:#0b2318 !important;border-color:#0a5c3a !important;color:#86efac !important}}
-html[data-theme="dark"] .alert-soft--warn{{background:#2a2210 !important;border-color:#7a5c00 !important;color:#fde68a !important}}
-html[data-theme="dark"] .alert-soft a{{color:#a5b4fc !important}}
-
-html[data-theme="dark"] .progress-track{{background:#1f2937 !important}}
-
-html[data-theme="dark"] .test-card-header{{background:#0f172a !important;border-bottom-color:#263244 !important}}
-html[data-theme="dark"] .chip-morado{{background:#1d2540 !important;color:#a5b4fc !important}}
-html[data-theme="dark"] button.secundario,
-html[data-theme="dark"] .boton.secundario{{background:#111827 !important;color:#a5b4fc !important;border-color:#334155 !important}}
-.boton.secundario.peligro{{border-color:#fda29b;color:#b42318}}
-html[data-theme="dark"] .boton.secundario.peligro{{background:#2a1a1a !important;color:#fca5a5 !important;border-color:#7a3b3b !important}}
-</style><link rel="stylesheet" href="/estilos-responsive.css"><script src="/tema.js" defer></script></head><body><div class="app"><aside class="sidebar"><div class="marca"><div class="logo">A</div><div><strong>Auto Prizma Pro</strong><span>Automatización PRIZMA</span></div></div><nav class="nav">{nav}</nav><div class="estado-servicio"><div class="servicio-linea"><span class="punto"></span> Servicio activo</div><div class="servicio-mini"><span>Navegador</span><span class="chip">Chromium</span></div><div class="servicio-mini"><span>Conexión</span><span class="chip">Estable</span></div></div></aside><main class="contenido">{body}</main></div></body></html>'''
+    return render_page(title, body, active=_CLAVES_MENU.get(active, "test"), page_css=_CSS_TESTS)
 
 
 def _render_issues(issues) -> str:
@@ -288,7 +152,7 @@ def _render_issues(issues) -> str:
             items.append(
                 f'<div class="issue {issue.severity.value}" data-issue-target="{target_id}" data-original-msg="{html.escape(issue.message, quote=True)}" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">'
                 f'<div class="issue-text"><strong>{issue.severity.value.title()}</strong>: {html.escape(issue.message)}</div>'
-                f'<a class="issue-link" href="{anchor}" onclick="irAPregunta(\'{target_id}\', {t_idx}); return false;" style="color:#5548e8;font-weight:700;text-decoration:underline;font-size:12px;cursor:pointer;">Ir a la pregunta ➔</a>'
+                f'<a class="issue-link" href="{anchor}" onclick="irAPregunta(\'{target_id}\', {t_idx}); return false;" style="font-weight:700;text-decoration:underline;font-size:12px;cursor:pointer;">Ir a la pregunta ➔</a>'
                 f'</div>'
             )
         else:
@@ -378,7 +242,7 @@ def _render_review(job_id: str, job: dict, message: str = "") -> str:
                     <span class="muted" style="font-size:12px;">Semana {html.escape(test.week or "N/A")} | Corte {html.escape(test.cut or "N/A")}</span>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;">
-                    <span id="test-toggle-text-{test_index}" style="font-size:12px;font-weight:700;color:#6366f1;">{"Contraer ▲" if test_index == 0 else "Desplegar ▼"}</span>
+                    <span id="test-toggle-text-{test_index}" style="font-size:12px;font-weight:700;color:var(--acento-texto);">{"Contraer ▲" if test_index == 0 else "Desplegar ▼"}</span>
                 </div>
             </div>
             <div class="test-card-body" id="test-card-body-{test_index}" style="padding:18px;{'display:block;' if test_index == 0 else 'display:none;'}">
@@ -431,7 +295,7 @@ def _render_review(job_id: str, job: dict, message: str = "") -> str:
         </div>
     </form>
 
-    <section id="bloque-acceso-prizma" class="panel" style="margin-top:28px;border:2px solid var(--morado);background:#faf9ff;scroll-margin-top:24px;">
+    <section id="bloque-acceso-prizma" class="panel bloque-prizma">
         <div style="display:flex;align-items:center;gap:14px;margin-bottom:16px;">
             <div style="width:42px;height:42px;border-radius:12px;background:var(--morado);color:#fff;display:grid;place-items:center;font-size:22px;flex-shrink:0;">🛡</div>
             <div>
@@ -716,7 +580,7 @@ def _render_tarjeta_estado_test(info: dict | None) -> str:
         <div style="margin:12px 0 8px;">
             <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;font-weight:600;">
                 <span id="card-txt-avance" class="muted">{exit} de {total} tests guardados exitosamente</span>
-                <span id="card-txt-pct" style="color:#5548e8;font-weight:800;">{pct}%</span>
+                <span id="card-txt-pct" style="color:var(--acento-texto);font-weight:800;">{pct}%</span>
             </div>
             <div class="progress-track">
                 <div id="card-barra-progreso" class="progress-fill" style="width:{pct}%;"></div>
