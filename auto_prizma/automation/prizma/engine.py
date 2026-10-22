@@ -3334,24 +3334,27 @@ def detectar_campo_recurso(
 def limpiar_descripcion(
     pagina,
 ):
+    """Borra la descripcion placeholder (NO_DISPONIBLE) del editor rico.
 
-    editores = pagina.locator(
-        '[contenteditable="true"]'
-    )
+    El editor de PRIZMA es un contenteditable que puede tardar en estar
+    listo o re-renderizarse tras el primer cargue, asi que un simple
+    Ctrl+A + Backspace a veces falla o lanza excepcion (el elemento se
+    desengancha del DOM). Por eso se guarda el INDICE del editor (no el
+    handle), se reintenta y, como respaldo, se vacia via JavaScript
+    disparando los eventos de input que escucha el framework.
+    """
+
+    editores = pagina.locator('[contenteditable="true"]')
 
     objetivos = [
-        normalizar_texto(
-            texto
-        )
+        normalizar_texto(texto)
         for texto in TEXTOS_DESCRIPCION_A_BORRAR
     ]
 
-    exactos = []
+    exactos = []  # indices, no handles: evita elementos colgados
     peligrosos = []
 
-    for i in range(
-        editores.count()
-    ):
+    for i in range(editores.count()):
 
         try:
 
@@ -3360,99 +3363,79 @@ def limpiar_descripcion(
             if not editor.is_visible():
                 continue
 
-            texto_original = (
-                editor.inner_text().strip()
-            )
-
-            texto_n = normalizar_texto(
-                texto_original
-            )
+            texto_original = editor.inner_text().strip()
+            texto_n = normalizar_texto(texto_original)
 
             if texto_n in objetivos:
-
-                exactos.append(
-                    editor
-                )
-
+                exactos.append(i)
                 continue
 
             for objetivo in objetivos:
-
-                if (
-                    objetivo
-                    and objetivo in texto_n
-                ):
-
-                    peligrosos.append(
-                        texto_original
-                    )
+                if objetivo and objetivo in texto_n:
+                    peligrosos.append(texto_original)
 
         except Exception:
             pass
 
     if peligrosos:
-
-        return (
-            False,
-            "ERROR_DESCRIPCION_CONTENIDO_ADICIONAL",
-        )
+        return (False, "ERROR_DESCRIPCION_CONTENIDO_ADICIONAL")
 
     if len(exactos) == 0:
-
-        return (
-            True,
-            None,
-        )
+        return (True, None)
 
     if len(exactos) > 1:
+        return (False, "ERROR_DESCRIPCION_MULTIPLE")
 
-        return (
-            False,
-            "ERROR_DESCRIPCION_MULTIPLE",
-        )
+    indice = exactos[0]
+    ultimo_problema = "no intentado"
 
-    editor = exactos[0]
+    for _intento in range(3):
 
-    try:
+        try:
+            # Re-resuelve el editor en cada intento: el DOM puede cambiar.
+            editor = editores.nth(indice)
+            editor.wait_for(state="visible", timeout=10000)
+            editor.click()
 
-        editor.click()
+            editor.press("Control+A")
+            editor.press("Backspace")
+            pagina.wait_for_timeout(500)
 
-        editor.press(
-            "Control+A"
-        )
+            if not normalizar_texto(editor.inner_text()):
+                print("✅ NO_DISPONIBLE eliminado.")
+                return (True, None)
 
-        editor.press(
-            "Backspace"
-        )
+            ultimo_problema = "quedó texto tras Backspace"
 
-        pagina.wait_for_timeout(
-            500
-        )
-
-        if normalizar_texto(
-            editor.inner_text()
-        ):
-
-            return (
-                False,
-                "ERROR_LIMPIANDO_DESCRIPCION",
+            # Respaldo: vaciar por JS y disparar eventos para que el
+            # framework (Quill/Vue) se entere del cambio y lo persista.
+            pagina.evaluate(
+                """(idx) => {
+                    const eds = document.querySelectorAll('[contenteditable="true"]');
+                    const ed = eds[idx];
+                    if (!ed) return;
+                    ed.focus();
+                    ed.innerHTML = '';
+                    ed.dispatchEvent(new Event('input', {bubbles: true}));
+                    ed.dispatchEvent(new Event('change', {bubbles: true}));
+                }""",
+                indice,
             )
+            pagina.wait_for_timeout(500)
 
-        print(
-            "✅ NO_DISPONIBLE eliminado."
-        )
+            editor = editores.nth(indice)
+            if not normalizar_texto(editor.inner_text()):
+                print("✅ NO_DISPONIBLE eliminado (respaldo JS).")
+                return (True, None)
 
-        return (
-            True,
-            None,
-        )
+            ultimo_problema = "el editor se volvió a llenar"
 
-    except Exception:
+        except Exception as e:
+            ultimo_problema = f"excepción: {e}"
+            pagina.wait_for_timeout(1000)
 
-        return (
-            False,
-            "ERROR_LIMPIANDO_DESCRIPCION",
-        )
+    print(f"⚠️ No se pudo limpiar la descripción: {ultimo_problema}")
+    return (False, "ERROR_LIMPIANDO_DESCRIPCION")
 
 
 # ============================================================

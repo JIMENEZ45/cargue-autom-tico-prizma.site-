@@ -244,7 +244,9 @@ VIEWPORT_NAVEGADOR = {"width": 1440, "height": 900}
 # Estado real del servicio que muestran la barra lateral y los indicadores de
 # Inicio (services/health.py): cada comprobacion se guarda en memoria este
 # tiempo para no repetirla en cada pagina.
-HEALTH_CHROMIUM_TTL_SECONDS = 30 * 60
+# Bajo a 5 min: 30 min hacia que el indicador de Chromium siga en rojo mucho
+# despues de instalarlo, y confunde al usuario.
+HEALTH_CHROMIUM_TTL_SECONDS = 5 * 60
 HEALTH_PRIZMA_TTL_SECONDS = 3 * 60
 HEALTH_PRIZMA_TIMEOUT_SECONDS = 6
 
