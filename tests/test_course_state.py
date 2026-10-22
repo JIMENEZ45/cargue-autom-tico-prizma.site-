@@ -322,3 +322,20 @@ def test_analizar_sin_faltantes_lo_deja_como_antes():
         "sin historial, todas deben venir marcadas (comportamiento original)"
     )
     assert "Reintento de cargues anteriores" not in html
+
+
+def test_cargado_y_omitido_cuentan_como_subidas():
+    """Regresion: el flujo de Tests escribe 'Cargado'/'Omitido', no 'OK'.
+
+    Ambos significan que el archivo ya esta en PRIZMA; antes se registraban
+    como error y /cursos mostraba faltantes falsas. 'Cancelado' si sigue
+    contando como pendiente.
+    """
+    _sembrar([
+        (5, "Balance general", "Cargado", ""),
+        (6, "Formato APA", "Omitido", "Ya estaba cargado en PRIZMA · se omite para no duplicar"),
+        (7, "Portada", "Cancelado", "Detenido por el usuario"),
+    ])
+
+    curso = course_state.resumen_cursos()[0]
+    assert (curso["total"], curso["subidas"], curso["faltantes"]) == (3, 2, 1)

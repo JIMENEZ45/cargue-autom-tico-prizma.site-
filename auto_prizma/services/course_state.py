@@ -48,6 +48,28 @@ def _clave_actividad(hoja, fila):
     return f"{str(hoja or '').strip()}|{str(fila or '').strip()}"
 
 
+def _resultado_subido(resultado):
+    """True si el resultado significa 'la actividad ya está en PRIZMA'.
+
+    El motor escribe "OK"; el flujo de Tests escriben "Cargado"/"Omitido" y
+    un cargue omitible puede venir como "Ya existía"/"Duplicado" (mismas
+    reglas que la columna Resultado de los reportes). Todo eso cuenta como
+    subido: la meta es que el archivo esté en PRIZMA, no cuántas veces se
+    intentó.
+    """
+    texto = str(resultado or "").strip().casefold()
+    texto = "".join(
+        c for c in unicodedata.normalize("NFD", texto)
+        if unicodedata.category(c) != "Mn"
+    )
+    if texto in ("ok", "cargado"):
+        return True
+    return any(
+        marca in texto
+        for marca in ("cargad", "exit", "omitid", "ya exist", "duplicad")
+    )
+
+
 def _fila_int(fila):
     try:
         return int(fila)
@@ -76,7 +98,7 @@ def registrar_resultado_actividad(actividad, resultado, observacion, recurso="")
         hoja = str(actividad.get("hoja") or "").strip()
         fila = actividad.get("fila_excel")
         nombre = str(actividad.get("nombre") or "").strip()
-        es_ok = str(resultado or "").strip().upper() == "OK"
+        es_ok = _resultado_subido(resultado)
         ahora = _ahora_colombia_iso()
 
         with ESTADO_LOCK:
