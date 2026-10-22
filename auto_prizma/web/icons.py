@@ -9,6 +9,7 @@ _TRAZOS = {
     # Menu lateral
     "inicio": '<path d="m3 10 9-7 9 7"/><path d="M5 9v12h14V9"/><path d="M10 21v-6h4v6"/>',
     "test": '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/>',
+    "moodle": '<path d="M3 19V9l4 4 5-6 5 6 4-4v10"/><path d="M3 19h18"/>',
     "subir": '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
     "historial": '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
     "reportes": '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18M15 3v18"/>',

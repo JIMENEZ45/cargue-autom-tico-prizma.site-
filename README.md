@@ -2,7 +2,7 @@
 
 Aplicación web que automatiza el cargue de contenidos académicos en **PRIZMA**. A partir de una matriz de diseño instruccional (Google Sheets, Excel o CSV) y los recursos del curso (ZIP o carpeta de Google Drive), la aplicación entra a PRIZMA con un navegador automatizado y carga las actividades **OVI**, **OVA** y **Retos evaluativos (Challenge)**. También crea **tests evaluativos** a partir de un documento Word (.docx).
 
-Construida con **FastAPI** y **Playwright (Chromium)**. Se despliega en **Railway** con Docker.
+Construida con **FastAPI** y **Playwright (Chromium)**. Se despliega en **Railway** con Docker (alternativa gratuita: [Oracle Cloud](docs/DEPLOY_ORACLE.md)).
 
 ---
 
@@ -17,6 +17,7 @@ Construida con **FastAPI** y **Playwright (Chromium)**. Se despliega en **Railwa
 - [Configurar Google (OAuth)](#configurar-google-oauth)
 - [Administración de usuarios](#administración-de-usuarios)
 - [Uso: cargue de actividades](#uso-cargue-de-actividades)
+- [Uso: cargue Moodle](#uso-cargue-moodle)
 - [Uso: tests evaluativos](#uso-tests-evaluativos)
 - [Datos y persistencia](#datos-y-persistencia)
 - [Seguridad](#seguridad)
@@ -37,6 +38,7 @@ Construida con **FastAPI** y **Playwright (Chromium)**. Se despliega en **Railwa
 - **Seguimiento en vivo.** Página de progreso por cargue, con opción de cancelar.
 - **Historial y reportes.** Cada cargue genera un reporte CSV que se puede ver en pantalla o descargar.
 - **Tests evaluativos.** Lee un .docx con preguntas, lo valida, permite corregirlo en pantalla y lo crea en PRIZMA. Puede hacerse por separado (`/tests`) o junto con un cargue de actividades.
+- **Cargue Moodle local.** En `/moodle` analiza una matriz CSV/XLSX y un ZIP de PDF/H5P, permite revisar las coincidencias y publicar recursos en un curso Prizma mediante Chromium visible e inicio de sesión manual.
 - **Tema claro/oscuro** y diseño adaptable a móvil.
 
 ---
@@ -97,6 +99,7 @@ auto_prizma/                  Código de la aplicación
     uploads.py                Iniciar, seguir, cancelar y estado de cargues
     reports.py                Historial, reportes guardados y descargas
     health.py                 Estado del servicio en JSON (Chromium y PRIZMA)
+    moodle_resources.py       Preview, trabajos y reportes del cargue Moodle local
   services/                   Lógica de negocio
     auth.py                   Usuarios, contraseñas, bloqueo por intentos y cookies de sesión
     matrix_analysis.py        Lectura de la matriz (CSV/Excel/Sheets) y análisis de matriz y ZIP
@@ -105,6 +108,7 @@ auto_prizma/                  Código de la aplicación
                               (crear, iniciar, cancelar y consultar trabajos)
     history.py                Historial de cargues y reportes CSV (por usuario)
     health.py                 Comprueba que Chromium esté instalado y que PRIZMA responda
+    moodle_resources.py       Lee matrices, extrae ZIP, genera preview y controla publicación Moodle
   integrations/google/        Integración con Google
     oauth.py                  Conexión OAuth con Google por usuario
     drive.py                  Lectura de enlaces en Google Sheets, listado de carpetas de Drive y
@@ -113,14 +117,18 @@ auto_prizma/                  Código de la aplicación
     engine.py                 Motor de cargue: lectura de la matriz y automatización de PRIZMA
     engine_overrides.py       Ajustes que se aplican sobre el motor al arrancar
     html_field.py             Formato HTML: leer el .html, escribirlo en el campo Html y quitar el archivo previo de Recurso
+  automation/moodle/          Cliente visible para cursos Moodle/Prizma
+    client.py                 Inicio de sesión manual, detección de duplicados y publicación PDF/H5P
   domain/
     drive_resource_policy.py  Reglas para decidir qué recurso de Drive corresponde a cada actividad
     file_names.py             Nombre base y clave exacta de nombres de archivo
+    moodle_resources.py       Reglas de destinos y matching Moodle
   web/
     layout.py                 Marco común de todas las páginas: menú lateral, estado del servicio,
                               tema claro/oscuro y menú del usuario
     icons.py                  Íconos SVG de la interfaz
     views.py                  Página de Inicio (análisis) y revisión antes del cargue
+    moodle_views.py           Preview, selección y reporte Moodle con render_page común
   evaluative_tests/           Módulo de tests evaluativos (cuestionarios en PRIZMA a partir de un .docx)
     models.py                 Estructuras de datos del documento (tests, secciones, preguntas)
     parser.py                 Lectura del .docx y conversión a esas estructuras
@@ -163,6 +171,7 @@ Dockerfile                  Imagen para despliegue
 | `GET /estado-servicio` | Estado de Chromium y de PRIZMA (JSON; lo consultan todas las páginas) |
 | `GET /app.css`, `GET /app.js` | Estilos y script comunes de la interfaz (públicos) |
 | `GET /tests` y `/tests/...` | Módulo de tests evaluativos |
+| `GET /moodle` y `/moodle/...` | Análisis, vista previa y publicación Moodle local |
 
 ---
 
@@ -287,6 +296,21 @@ Las filas sin nombre o sin categoría se omiten.
 
 Arriba a la derecha están el botón de tema claro/oscuro y el menú del usuario (*Mi contraseña*, *Desconectar Google*, *Salir*). Los indicadores de Inicio y la tarjeta del menú lateral muestran el estado real: *Chromium activo* si el navegador de Playwright está instalado y *Servicio estable* si PRIZMA responde (se comprueba cada pocos minutos). *Ver guía* abre los pasos y consejos. En *Reportes* se puede buscar, filtrar por programa, curso y fecha, ordenar columnas y copiar el enlace de un reporte; en el detalle, buscar en la tabla y copiar la observación de una fila.
 
+---
+
+## Uso: cargue Moodle
+
+El apartado **Cargue Moodle** reutiliza el análisis y la publicación de recursos de la aplicación de escritorio MOODLE. Recibe una matriz CSV/XLSX y un ZIP con los archivos PDF/H5P, aplica las reglas de matching por nombre y extensión, y muestra una vista previa por fila antes de permitir publicar. Al comparar elimina prefijos reconocidos del nombre del recurso, como `H5P -`, `PDF -` o `Infografía -`, y mantiene ambiguas las coincidencias múltiples.
+
+1. Ejecuta Auto Prizma **en el mismo equipo** que usarás para iniciar sesión en Prizma y abre `http://127.0.0.1:8000`. El apartado no está habilitado desde una instancia remota.
+2. Sube la matriz exportada, el ZIP y el enlace HTTPS del curso (`prizma.americana.edu.co/course/view.php?id=...`).
+3. Pulsa **Generar vista previa** y revisa las coincidencias únicas. Las filas ambiguas, sin archivo, con extensión incorrecta o no compatibles no se pueden seleccionar.
+4. Usa **Probar 1 recurso** primero o marca recursos y pulsa **Proseguir con los seleccionados**. Ambas acciones piden confirmación.
+5. Se abrirá Chromium visible. Inicia sesión manualmente y deja la ventana abierta hasta que termine el trabajo; luego puedes verificar el curso y cerrar la ventana cuando quieras. La sesión permanece en un perfil local separado por usuario; Auto Prizma no guarda la contraseña.
+6. Revisa la tabla de resultados y descarga los reportes JSON/CSV.
+
+Los archivos de análisis quedan en `uploads/moodle/`; los reportes en `data/reportes/moodle/` y el perfil local en `data/moodle_profiles/`. La matriz original no se modifica. Este flujo es independiente del cargue `/analizar` del panel administrativo.
+
 ### Formato H5P o HTML
 
 Las actividades con recurso interactivo (OVA y OVI de tipo H5P o infografía) se pueden cargar de dos formas; los PDF no cambian:
@@ -357,6 +381,8 @@ Todo lo que debe sobrevivir a un reinicio se guarda en `AUTO_PRIZMA_DATA_DIR` (p
 | `tokens/` | Tokens de Google de cada usuario |
 | `historial.json` | Registro de cargues realizados |
 | `reportes/` | Reportes CSV de cada cargue |
+| `reportes/moodle/` | Reportes JSON/CSV de los cargues Moodle |
+| `moodle_profiles/` | Perfil local de Chromium Moodle, separado por usuario |
 
 Las carpetas `uploads/` y `temp/` guardan archivos de trabajo temporales.
 
@@ -373,6 +399,7 @@ La carpeta `data/` está en `.gitignore` y **nunca debe subirse al repositorio**
 - **Intentos fallidos:** tras 5 intentos fallidos el acceso se bloquea 120 segundos.
 - **Aislamiento entre usuarios:** cada persona solo ve y controla sus propios cargues, reportes e historial.
 - **Credenciales de PRIZMA:** se piden en cada cargue y se mantienen solo en memoria mientras dura; no se escriben en archivos.
+- **Moodle local:** `/moodle` solo acepta solicitudes desde loopback porque el navegador visible debe abrirse en el equipo de la persona. El perfil de Chromium conserva la sesión Moodle local por usuario bajo `data/moodle_profiles/`; no se guarda la contraseña. No está disponible en Railway ni en Oracle Cloud.
 - **Google:** cada usuario autoriza su propia cuenta, con permisos de solo lectura.
 
 ---
@@ -392,6 +419,10 @@ Configuración recomendada del servicio:
 2. **Variables de entorno:** `AUTO_PRIZMA_SECRET` (una cadena larga y aleatoria) y las de Google, con `GOOGLE_REDIRECT_URI=https://<dominio>/google/callback`.
 3. **Red:** el contenedor escucha en el puerto **8000**.
 4. **Volver atrás:** si un despliegue falla, en *Deployments* se puede hacer *Rollback* al anterior.
+
+### Alternativa gratuita: Oracle Cloud Always Free
+
+Para desplegar sin pagar servidor, en una máquina virtual gratuita de Oracle Cloud con HTTPS automático (Caddy) y un subdominio gratis (DuckDNS): ver [`docs/DEPLOY_ORACLE.md`](docs/DEPLOY_ORACLE.md). Los archivos están en `deploy/oracle/` (`docker-compose.yml`, `Caddyfile`, `.env.example`, `setup-server.sh`) y reutilizan el mismo `Dockerfile`. Vercel y los planes gratuitos de Render/Koyeb no sirven: la app necesita Chromium, procesos largos en segundo plano y disco persistente.
 
 ---
 

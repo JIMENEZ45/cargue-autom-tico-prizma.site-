@@ -20,9 +20,14 @@ def _session_client():
 
 @pytest.mark.parametrize(
     "ruta",
-    ["/", "/tests", "/cargue-actual", "/historial", "/reportes", "/cambiar-clave"],
+    ["/", "/tests", "/moodle", "/cargue-actual", "/historial", "/reportes", "/cambiar-clave"],
 )
-def test_every_page_uses_the_common_frame(ruta):
+def test_every_page_uses_the_common_frame(ruta, monkeypatch):
+    if ruta == "/moodle":
+        monkeypatch.setattr(
+            "auto_prizma.api.routes.moodle_resources._request_is_local",
+            lambda _request: True,
+        )
     respuesta = _session_client().get(ruta)
     html = respuesta.text
 

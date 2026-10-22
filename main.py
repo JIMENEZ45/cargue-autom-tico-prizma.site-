@@ -23,6 +23,7 @@ import auto_prizma.api.routes.analysis  # noqa: F401
 import auto_prizma.api.routes.uploads  # noqa: F401
 import auto_prizma.api.routes.reports  # noqa: F401
 import auto_prizma.api.routes.health  # noqa: F401
+import auto_prizma.api.routes.moodle_resources  # noqa: F401
 
 from auto_prizma.core.config import PRIZMA_BASE_URL, PRIZMA_ES_PRODUCCION, RESULTADOS_DIR
 from auto_prizma.integrations.google.oauth import _descargar_google_docx_para_tests
