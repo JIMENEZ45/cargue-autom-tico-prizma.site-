@@ -48,6 +48,10 @@ from auto_prizma.automation.prizma.html_field import (  # noqa: E402
     normalizar_saltos,
     quitar_archivo_de_recurso,
 )
+from auto_prizma.services.course_state import (  # noqa: E402
+    registrar_resultado_actividad,
+)
+from auto_prizma.services.error_messages import es_codigo_error, mensaje_error  # noqa: E402
 
 VERSION_SCRIPT = "PRUEBA_H5P_NUEVO_GESTION_FINANCIERA_V2"
 
@@ -1769,6 +1773,17 @@ def guardar_resultado(
     recurso="",
 ):
 
+    # Acumula el estado del curso (data/estado_cursos.json): que actividades
+    # ya quedaron en PRIZMA y cual es la causa de las que faltan.
+    registrar_resultado_actividad(actividad, resultado, observacion, recurso)
+
+    # Motivo en lenguaje humano solo cuando la observacion es un codigo
+    # ERROR_* (si ya es texto libre, se entiende sola). El codigo original se
+    # conserva en la columna Observación (diagnostico y compatibilidad).
+    motivo = ""
+    if str(resultado).strip().upper() != "OK" and es_codigo_error(observacion):
+        motivo = mensaje_error(observacion)
+
     existe = os.path.isfile(
         ruta_reporte
     )
@@ -1789,6 +1804,7 @@ def guardar_resultado(
             escritor.writerow(
                 [
                     "Fila Excel",
+                    "Hoja",
                     "Programa",
                     "Curso",
                     "Semana",
@@ -1799,12 +1815,14 @@ def guardar_resultado(
                     "Recurso",
                     "Resultado",
                     "Observación",
+                    "Motivo",
                 ]
             )
 
         escritor.writerow(
             [
                 actividad["fila_excel"],
+                actividad.get("hoja", ""),
                 actividad["programa"],
                 actividad["curso"],
                 actividad["semana"],
@@ -1815,6 +1833,7 @@ def guardar_resultado(
                 recurso,
                 resultado,
                 observacion,
+                motivo,
             ]
         )
 
@@ -2988,6 +3007,41 @@ def _buscar_exacta_dos_intentos(
 # BUSCAR ACTIVIDAD
 # ============================================================
 
+def _tabla_actividades_vacia(pagina):
+    """Detecta si el listado de actividades está completamente vacío.
+
+    Sirve para distinguir "el curso no tiene la plantilla precargada" de
+    "el nombre de la actividad no coincide". Cuenta los contenedores con
+    exactamente 3 botones (misma heurística que encontrar_fila_desde_elemento)
+    sin filtrar por nombre: si no hay ninguno, no hay actividades en la vista.
+
+    Devuelve None si no se pudo medir (para no dar falsos positivos).
+    """
+    try:
+        return pagina.evaluate(
+            """() => {
+                const candidatos = document.querySelectorAll('*');
+                let filas = 0;
+                for (const el of candidatos) {
+                    if (el.querySelectorAll('button').length !== 3) continue;
+                    // Nos quedamos con el más interno: si un descendiente
+                    // también tiene 3 botones, este es un ancestro del mismo.
+                    let interno = true;
+                    for (const hijo of el.querySelectorAll('*')) {
+                        if (hijo.querySelectorAll('button').length === 3) {
+                            interno = false;
+                            break;
+                        }
+                    }
+                    if (interno) filas += 1;
+                }
+                return filas;
+            }"""
+        )
+    except Exception:
+        return None
+
+
 def buscar_actividad_correcta(
     pagina,
     actividad,
@@ -3086,6 +3140,29 @@ def buscar_actividad_correcta(
     )
 
     if len(coincidencias) == 0:
+
+        # Distingue dos causas muy distintas con el mismo síntoma:
+        #   - El listado está vacío: el curso no tiene la plantilla precargada.
+        #   - Hay filas pero ninguna coincide: el nombre no coincide con PRIZMA.
+        filas_visibles = _tabla_actividades_vacia(pagina)
+
+        if filas_visibles == 0:
+
+            print(
+                "❌ El listado de actividades está vacío: "
+                "el curso no tiene la plantilla precargada."
+            )
+
+            return (
+                None,
+                "ERROR_CURSO_SIN_PLANTILLA",
+            )
+
+        print(
+            "El listado tiene filas; el nombre de la actividad "
+            "no coincide con ninguno."
+        )
+
         return (
             None,
             "ERROR_ACTIVIDAD_NO_ENCONTRADA",

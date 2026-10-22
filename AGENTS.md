@@ -9,6 +9,7 @@ Runbook operativo para instalar, arrancar y mantener **Auto Prizma Pro** en loca
 - **Stack:** Python 3.12+, FastAPI, Uvicorn, Playwright (Chromium), openpyxl, google-api-python-client.
 - **Entrada:** `main.py` arma `app` e importa rutas. Se corre con `uvicorn main:app`.
 - **Entorno virtual:** `.venv/` en la raíz. **Siempre** usar su Python/binarios, nunca el del sistema.
+- **Datos:** todo vive en `data/` (usuarios, tokens, `historial.json`, reportes CSV). `data/estado_cursos.json` acumula por curso qué actividades ya quedaron en PRIZMA y la causa de las que faltan: lo escribe `auto_prizma/services/course_state.py` desde `guardar_resultado()` y lo usan la página `/cursos` y el pre-marcado de pendientes en `/analizar`. Los códigos `ERROR_*` se traducen con `auto_prizma/services/error_messages.py` (el CSV conserva el código en `Observación` y el texto humano en `Motivo`).
 - **Producción:** Railway despliega cada push a `main`. Rama de trabajo del usuario: `Jeremy`.
 
 ---
@@ -90,6 +91,7 @@ Se leen en CADA llamada (Google y cookie) o al importar (`AUTO_PRIZMA_URL_PRIZMA
 
 ## 6. Verificación tras cambios
 
-1. `python -c "import ast; ast.parse(open('auto_prizma/automation/prizma/engine.py').read())"` (sintaxis).
-2. Arrancar con `--reload` y comprobar `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/login` → debe dar `200`.
-3. Probar el flujo afectado en un entorno **de pruebas** antes de tocar producción.
+1. `python -m pytest tests/ -q` → la suite completa debe pasar en verde (incluye `tests/test_course_state.py`).
+2. `python -c "import ast; ast.parse(open('auto_prizma/automation/prizma/engine.py').read())"` (sintaxis).
+3. Arrancar con `--reload` y comprobar `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:8000/login` → debe dar `200`.
+4. Probar el flujo afectado en un entorno **de pruebas** antes de tocar producción.

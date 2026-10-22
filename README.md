@@ -106,6 +106,12 @@ La contraseña debe tener **mínimo 8 caracteres**. Pedirá usuario, nombre a mo
 
 Ve a **http://127.0.0.1:8000/login** con el usuario y contraseña que creaste.
 
+Dentro de la app:
+
+- **Inicio** — sube la matriz y el ZIP y arranca el cargue.
+- **Cursos** — por curso: cuántas actividades ya están en PRIZMA y **por qué falta cada una** (mensaje legible, no código). Al volver a subir la matriz del mismo curso, **las pendientes se marcan solas** y las ya cargadas quedan sin marca: es el reintento sin tener que elegir una por una.
+- **Historial / Reportes** — cargues anteriores y su reporte CSV (columnas `Motivo` = explicación en español y `Hoja`).
+
 ---
 
 ## Conectar Google (opcional)
@@ -132,6 +138,7 @@ Solo si vas a analizar matrices desde enlaces de Google Sheets o carpetas de Dri
 | Google: *Faltan variables* | Define `GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI` |
 | Google: *redirect_uri_mismatch* | La URI debe coincidir **exactamente** con la registrada en Google Cloud |
 | Login bloqueado | Espera 120 s (bloqueo tras 5 intentos fallidos) |
+| Un cargue salió con errores | Entra a **Cursos**: te dice cuáles faltan y la causa en español. En el CSV, la columna `Motivo` la explica y `Observación` conserva el código `ERROR_*` |
 
 ---
 

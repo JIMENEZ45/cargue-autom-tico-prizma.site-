@@ -107,6 +107,13 @@ HISTORIAL_PATH = os.path.join(
     "historial.json",
 )
 
+# Estado acumulado por curso: que actividades de cada curso ya quedaron
+# subidas a PRIZMA y cual es la causa de las que faltan.
+ESTADO_CURSOS_PATH = os.path.join(
+    DATA_DIR,
+    "estado_cursos.json",
+)
+
 USUARIOS_PATH = os.path.join(
     DATA_DIR,
     "usuarios.json",
