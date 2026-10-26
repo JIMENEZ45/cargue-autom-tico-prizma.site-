@@ -29,6 +29,7 @@ APP_NAME = "Cargue Prizma Pro"
 NAV_ITEMS = (
     ("inicio", "Inicio", "/", "inicio"),
     ("test", "Test", "/tests", "test"),
+    ("auditor", "Auditor", "/auditor", "escudo"),
     ("cargue", "Cargue actual", "/cargue-actual", "subir"),
     ("cursos", "Cursos", "/cursos", "libro"),
     ("historial", "Historial", "/historial", "historial"),
