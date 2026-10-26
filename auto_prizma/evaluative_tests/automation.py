@@ -120,6 +120,19 @@ def resolver_variantes_numericas(texto: str | None) -> list[str]:
     return []
 
 
+def coincide_titulo_test(texto_pagina: str, titulo: str) -> bool:
+    """True si el titulo del test aparece en un texto de la lista de PRIZMA.
+
+    Compara normalizado (sin acentos, minusculas, espacios colapsados) para
+    que diferencias de formato entre el documento y PRIZMA no cuenten como
+    duplicado. Se usa para no volver a crear un test que ya quedo guardado.
+    """
+    objetivo = normalizar_texto(titulo)
+    if len(objetivo) < 4:
+        return False
+    return objetivo in normalizar_texto(texto_pagina)
+
+
 class PrizmaTestAutomator:
     def __init__(
         self,
@@ -609,7 +622,43 @@ class PrizmaTestAutomator:
         self._log("No se detectó el campo de descripción en el formulario.", "warn")
         return False
 
-    def navegar_a_crear_test(self, page, forzar_nuevo: bool = False):
+    def test_existe_en_prizma(self, page, titulo: str) -> bool:
+        """Detecta si la lista de Tests de PRIZMA ya tiene ese titulo.
+
+        Se llama al llegar al apartado 'Tests' y antes de presionar 'Crear',
+        para que un reintento nunca duplique un test que ya quedo guardado en
+        un intento anterior. Si no se puede leer la lista, devuelve False
+        (se prefiere un posible duplicado antes que saltarse un cargue).
+        """
+        titulo = str(titulo or "").strip()
+        if not titulo:
+            return False
+
+        try:
+            filas = page.locator(
+                'table tbody tr, [role="row"], .MuiTableContainer-root li'
+            )
+            total = filas.count()
+            for idx in range(min(total, 300)):
+                try:
+                    texto = filas.nth(idx).inner_text(timeout=1000)
+                except Exception:
+                    continue
+                if coincide_titulo_test(texto, titulo):
+                    return True
+
+            # Respaldo: el titulo completo visible en la pagina (aunque la
+            # fila lo muestre truncado con CSS, el DOM guarda el texto entero).
+            return page.get_by_text(titulo, exact=False).count() > 0
+        except Exception as exc:
+            self._log(
+                f"No se pudo verificar si '{titulo}' ya existe en PRIZMA ({exc}). "
+                "Continuando con la creación.",
+                "warn",
+            )
+            return False
+
+    def navegar_a_crear_test(self, page, forzar_nuevo: bool = False, titulo_test: str | None = None):
         self._log("Iniciando navegación: Dashboard -> Actividades -> Tests -> Crear...", "info")
 
         if not forzar_nuevo:
@@ -624,7 +673,7 @@ class PrizmaTestAutomator:
                     val_nom = str(nombre_previo.input_value() or "").strip()
                     if not val_nom:
                         self._log("Formulario 'Crear test' limpio ya visible en pantalla.", "ok")
-                        return
+                        return False
 
         # Si se requiere un formulario nuevo (por ejemplo tras terminar el test previo),
         # cerramos o descartamos el formulario anterior con "Cancelar" si está presente.
@@ -671,6 +720,16 @@ class PrizmaTestAutomator:
         except Exception as e:
             self._log(f"Accediendo al apartado 'Tests': {e}", "warn")
 
+        # 2b. Estamos en la LISTA de Tests: si el título ya está, no duplicar.
+        if titulo_test and self.test_existe_en_prizma(page, titulo_test):
+            self._log(
+                f"Test '{titulo_test}' ya existe en la lista de Tests de PRIZMA. "
+                "No se creará un duplicado.",
+                "ok",
+                self._tomar_captura(page),
+            )
+            return True
+
         # 3. Clic en el botón 'Crear' dentro de Tests
         self._log("Paso 3/3: Buscando y presionando botón 'Crear'...", "info")
         btn_crear = page.get_by_role("button", name=re.compile(r"^crear(\s+test)?$", re.I)).first
@@ -711,6 +770,7 @@ class PrizmaTestAutomator:
 
         if campo_listo and campo_listo.is_visible():
             self._log("Formulario de creación listo y cargado correctamente.", "ok", self._tomar_captura(page))
+            return False
         else:
             snap = self._tomar_captura(page)
             self._log("No se encontró el formulario de creación tras navegar por Actividades -> Tests -> Crear.", "error", snap)
@@ -960,6 +1020,7 @@ class PrizmaTestAutomator:
                 self.login(page, usuario_prizma, clave_prizma)
 
                 exitosos = 0
+                omitidos = 0
                 detenido = False
                 for index, test in enumerate(tests, start=1):
                     # Verificar si el usuario solicitó detener la automatización
@@ -976,7 +1037,26 @@ class PrizmaTestAutomator:
                         test_callback(index, "en_proceso", "Diligenciando campos e importando preguntas...", "")
 
                     try:
-                        self.navegar_a_crear_test(page, forzar_nuevo=(index > 1))
+                        ya_existia = self.navegar_a_crear_test(
+                            page,
+                            forzar_nuevo=(index > 1),
+                            titulo_test=test.title,
+                        )
+                        if ya_existia is True:
+                            omitidos += 1
+                            self._log(
+                                f"Test {index} '{test.title}' ya estaba cargado en PRIZMA. "
+                                "Omitido para no duplicar.",
+                                "warn",
+                            )
+                            if test_callback:
+                                test_callback(
+                                    index,
+                                    "omitido",
+                                    "Ya estaba cargado en PRIZMA · se omite para no duplicar",
+                                    "",
+                                )
+                            continue
 
                         cascada_items = [
                             ("Facultad", cascada.get("facultad", "")),
@@ -1044,7 +1124,8 @@ class PrizmaTestAutomator:
                         "ok": True,
                         "detenido": True,
                         "simulacion": solo_simulacion,
-                        "procesados": exitosos,
+                        "procesados": exitosos + omitidos,
+                        "omitidos": omitidos,
                         "total": len(tests),
                         "logs": self.logs,
                         "capturas": self.capturas,
@@ -1055,12 +1136,15 @@ class PrizmaTestAutomator:
                     if solo_simulacion
                     else "Todos los tests fueron procesados y guardados con éxito en PRIZMA."
                 )
+                if omitidos:
+                    msg_final += f" · {omitidos} ya estaban en PRIZMA y se omitieron (sin duplicar)."
                 self._log(msg_final, "ok")
                 return {
                     "ok": True,
                     "detenido": False,
                     "simulacion": solo_simulacion,
-                    "procesados": exitosos,
+                    "procesados": exitosos + omitidos,
+                    "omitidos": omitidos,
                     "total": len(tests),
                     "logs": self.logs,
                     "capturas": self.capturas,

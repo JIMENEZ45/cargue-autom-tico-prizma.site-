@@ -97,6 +97,7 @@ button.secundario,.boton.secundario{background:var(--panel);color:var(--acento-t
 .badge-dinamico--ok{background:var(--verde-suave);color:var(--verde)}
 .badge-dinamico--error{background:var(--rojo-suave);color:var(--rojo)}
 .badge-dinamico--detenido{background:var(--panel-2);color:var(--muted)}
+.badge-dinamico--omitido{background:var(--ambar-suave);color:var(--ambar)}
 
 .live-card{border-radius:16px;padding:20px 24px;box-shadow:0 4px 14px rgba(0,0,0,.04);border:2px solid transparent;margin-bottom:24px;transition:all .3s ease}
 .live-card--running{background:var(--acento-suave);border-color:var(--acento)}

@@ -288,6 +288,7 @@ def generar_html(
     error=None,
     trabajo_id=None,
     seleccion_actual=None,
+    aviso=None,
 ):
 
     def e(valor):
@@ -538,6 +539,15 @@ def generar_html(
             + "<div><strong>No se pudo iniciar el cargue</strong><p>" + e(error) + "</p></div></div>"
         )
 
+    bloque_aviso_revision = ""
+    if aviso:
+        bloque_aviso_revision = (
+            '<div class="aviso info" role="status">' + icon("info")
+            + "<div><strong>Reintento de cargues anteriores</strong><p>"
+            + e(aviso)
+            + "</p></div></div>"
+        )
+
     if es_modo_archivo:
         resumen_origen = (
             ("Modo archivo · " if origen_matriz == "archivo" else "Google Sheets · ")
@@ -601,6 +611,7 @@ def generar_html(
     {bloque_test_html}
     {bloque_advertencias_revision}
     {bloque_error_revision}
+    {bloque_aviso_revision}
 
     <section class="panel selector-recursos-panel">
         <div class="selector-recursos-cabecera">

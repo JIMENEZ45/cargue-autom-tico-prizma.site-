@@ -17,6 +17,7 @@ from auto_prizma.core.application import app
 from auto_prizma.core.clock import _ahora_colombia_iso
 from auto_prizma.core.config import FORMATOS_RECURSO_INTERACTIVO
 from auto_prizma.services.auth import _usuario_actual
+from auto_prizma.services.course_state import preseleccion_faltantes
 from auto_prizma.integrations.google.drive import _resolver_hoja_objetivo
 from auto_prizma.services.upload_jobs import create_analyzed_job
 from auto_prizma.services.matrix_analysis import (
@@ -233,9 +234,28 @@ async def analizar(
             formato_recurso=formato_recurso,
         )
 
+        # ====================================================
+        # PRE-SELECCION DE FALTANTES (reintento sin volver a elegir)
+        # ====================================================
+        # Si este curso ya tuvo cargues con actividades pendientes, se marcan
+        # solo esas. Si la matriz no coincide con lo registrado, no se marca
+        # nada y se conserva el comportamiento normal (todo marcado).
+        faltantes, cursos_faltantes = preseleccion_faltantes(hojas, _usuario_actual())
+        aviso_preseleccion = None
+        if faltantes:
+            cursos_txt = ", ".join(cursos_faltantes) or "este curso"
+            aviso_preseleccion = (
+                f"Quedaron {len(faltantes)} actividad(es) pendientes de un cargue anterior "
+                f"de {cursos_txt}. Se marcaron solo esas para no repetir lo que ya está "
+                "en PRIZMA; las demás quedaron sin marca. Si quieres cargar todas, usa "
+                "«Seleccionar todo»."
+            )
+
         return generar_html(
             resultado=resultado,
             trabajo_id=trabajo_id,
+            seleccion_actual=faltantes or None,
+            aviso=aviso_preseleccion,
         )
 
     except Exception as e:

@@ -30,6 +30,7 @@ NAV_ITEMS = (
     ("inicio", "Inicio", "/", "inicio"),
     ("test", "Test", "/tests", "test"),
     ("cargue", "Cargue actual", "/cargue-actual", "subir"),
+    ("cursos", "Cursos", "/cursos", "libro"),
     ("historial", "Historial", "/historial", "historial"),
     ("reportes", "Reportes", "/reportes", "reportes"),
     ("clave", "Mi contraseña", "/cambiar-clave", "clave"),

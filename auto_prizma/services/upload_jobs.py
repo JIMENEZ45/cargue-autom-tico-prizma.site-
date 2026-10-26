@@ -308,6 +308,15 @@ def _ejecutar_test_en_cargue(trabajo, test_job_id, usuario, contrasena):
                 trabajo["mensaje"] = f"{item['nombre']} guardado con éxito."
                 if ruta_reporte:
                     _fila_test_reporte(indice, item, "Cargado")
+            elif estado_test == "omitido":
+                # Ya existía en PRIZMA de un intento anterior: el objetivo ya
+                # está cumplido (el test está en PRIZMA), solo no se duplica.
+                item["estado"] = "ok"
+                trabajo["procesadas"] = (trabajo.get("procesadas") or 0) + 1
+                trabajo["exitosas"] = (trabajo.get("exitosas") or 0) + 1
+                trabajo["mensaje"] = f"{item['nombre']} ya estaba cargado en PRIZMA (omitido para no duplicar)."
+                if ruta_reporte:
+                    _fila_test_reporte(indice, item, "Omitido")
             elif estado_test == "error":
                 item["estado"] = "error"
                 item["error"] = err or msg_test

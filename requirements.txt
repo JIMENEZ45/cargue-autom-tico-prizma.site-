@@ -1,9 +1,19 @@
-fastapi[standard]
-openpyxl
-python-multipart
-python-docx
+# Auto Prizma Pro — dependencias.
+# Versiones fijadas al estado que ya funciona (reproduce el entorno probado).
+#
+# IMPORTANTE: tras instalar hay que instalar el navegador:
+#     playwright install chromium
+# Sin eso los cargues fallan con "Chromium no disponible". Si cambias la
+# versión de playwright, reinstala Chromium o la app no lo encontrará.
+
+fastapi[standard]==0.153.0
+uvicorn==0.54.0
+openpyxl==3.1.5
+python-multipart==0.0.32
+python-docx==1.2.0
 playwright==1.61.0
-tzdata
+tzdata==2026.5
 google-auth==2.57.0
 google-auth-oauthlib==1.4.1
 google-api-python-client==2.199.0
+pytest==9.1.1

@@ -75,7 +75,7 @@ def ejecutar_test_job(
     with _JOBS_LOCK:
         job = _JOBS.get(job_id)
     if not job:
-        return {"ok": False, "error": "Análisis de test no encontrado en el servidor."}
+        return {"ok": False, "error": "Análisis de test no encontrado en el servidor. Normalmente pasa si el servidor se reinició con la página abierta (los análisis se guardan solo en memoria). Sube el documento de nuevo para generar uno nuevo."}
 
     document: TestDocument = job["document"]
     cascada = dict(cascada_override or job.get("cascada_datos") or {})
@@ -106,6 +106,7 @@ def ejecutar_test_job(
             "total": total_tests,
             "procesados": 0,
             "exitosos": 0,
+            "omitidos": 0,
             "pendientes": total_tests,
             "fallidos": 0,
             "progreso_porcentaje": 0,
@@ -204,6 +205,13 @@ def ejecutar_test_job(
                 auto_state["procesados"] += 1
                 auto_state["pendientes"] = max(0, auto_state["total"] - auto_state["procesados"])
                 _fila_test_reporte(indice, item, "Cargado")
+            elif estado_test == "omitido":
+                # Ya quedó guardado en PRIZMA en un intento anterior: no se
+                # vuelve a crear (evita duplicados en un reintento).
+                auto_state["omitidos"] += 1
+                auto_state["procesados"] += 1
+                auto_state["pendientes"] = max(0, auto_state["total"] - auto_state["procesados"])
+                _fila_test_reporte(indice, item, "Omitido", msg_test)
             elif estado_test == "error":
                 auto_state["fallidos"] += 1
                 auto_state["procesados"] += 1
@@ -268,6 +276,9 @@ def ejecutar_test_job(
                     auto_state["mensaje"] = "🛡 Simulación exitosa: todos los tests fueron validados sin guardar en PRIZMA."
                 else:
                     auto_state["mensaje"] = "¡Todos los tests fueron creados y guardados exitosamente en PRIZMA!"
+                auto_state["omitidos"] = res.get("omitidos", auto_state.get("omitidos", 0))
+                if auto_state.get("omitidos"):
+                    auto_state["mensaje"] += f" · {auto_state['omitidos']} ya estaban cargados y se omitieron (sin duplicar)."
                 auto_state["procesados"] = res.get("procesados", len(document.tests))
             else:
                 auto_state["estado"] = "error"
