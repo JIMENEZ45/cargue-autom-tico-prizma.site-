@@ -104,7 +104,8 @@ auto-prizma-pro/
 ├── deploy/oracle/                  # Despliegue gratuito en Oracle Cloud: docker-compose (app + Caddy HTTPS),
 │                                   # Caddyfile, .env.example, setup-server.sh
 ├── docs/DEPLOY_ORACLE.md           # Guía paso a paso del despliegue en Oracle Cloud
-├── README.md
+├── README.md                       # Guía corta: instalar, arrancar, crear usuario, Moodle local
+├── GUIA_DETALLADA.md               # Documentación completa (antes era el README largo)
 └── data/ uploads/ temp/ resultados/  # Generados en ejecución, no versionados (data/ contiene secretos)
 ```
 
@@ -172,6 +173,7 @@ auto-prizma-pro/
 
 - `integrations/google/oauth.py`: flujo OAuth web con PKCE y `state` (TTL 10 min, ligado al usuario de la sesión), scopes de solo lectura (`config.GOOGLE_SCOPES`), token por usuario en `DATA_DIR/tokens/<slug>-<hash>.json`, refresco automático, descarga de Google Docs para tests.
 - `integrations/google/drive.py`: Sheets API (enlace real de la columna G, incluidos Smart Chips; pestaña por `gid`) y Drive API en lotes (`DRIVE_BATCH_MAX`, `DRIVE_PROFUNDIDAD_MAX`). **Solo metadatos**: nunca descarga H5P/PDF.
+  - **Sin memoria entre análisis** (corregido el 2026-10-22): `_precargar_referencias_drive_batch` vuelve a consultar en CADA análisis los enlaces `open?id=` (tipo real) y a listar las carpetas. Antes se saltaba lo que ya estaba en `_CACHE_REFERENCIAS_DRIVE`/`_CACHE_CARPETAS_DRIVE`, incluidos los errores: un fallo momentáneo de Google dejaba 40 filas como «NO HAY ARCHIVO EN LA CARPETA» hasta reiniciar el servidor, aunque las carpetas tuvieran el H5P. `_obtener_metadatos_drive_en_lote` reintenta los fallidos (`config.DRIVE_ESPERAS_REINTENTO`) y guarda el motivo (`_texto_error_drive`: 404/403/429) en la entrada `"tipo": "error"`; la fila muestra «NO SE PUDO CONSULTAR EL ENLACE» con ese motivo en vez de «sin archivo».
 - `check_sheet_link(url)` (decisión del usuario, 2026-10-07): al pegar el enlace en Inicio, `app.js`/`views.py` llaman a `/google/validar-matriz`, que pide a Sheets solo `properties(title),sheets.properties(sheetId,title)` con la cuenta del usuario y responde `{ok, documento, pestana}` o `{ok: false, motivo, conectar}`. Es solo un aviso: el análisis vuelve a validar todo.
 - Cualquier integración nueva va en `integrations/<servicio>/` y lee su configuración de `core/config.py`.
 
@@ -269,7 +271,7 @@ URL de desarrollo: `http://127.0.0.1:8000`. Para probar contra el ambiente de pr
 - Framework: **pytest** (incluido en `requirements.txt`). `tests/conftest.py` fija `AUTO_PRIZMA_DATA_DIR` en una carpeta temporal y crea el usuario `adminlocal`. PRIZMA y Playwright están simulados (`unittest.mock.patch`).
 
 ```powershell
-python -m pytest -q                                   # todo (≈50 s, 313 pruebas al 2026-10-21)
+python -m pytest -q                                   # todo (≈50 s, 336 pruebas al 2026-10-26)
 python -m pytest tests/test_test_parser.py -q         # un archivo
 python -m pytest tests/test_automation.py -k nombre   # una prueba
 ```

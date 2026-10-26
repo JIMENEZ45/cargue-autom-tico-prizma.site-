@@ -180,6 +180,10 @@ DRIVE_BATCH_MAX = 100
 # Profundidad maxima al recorrer subcarpetas de Drive.
 DRIVE_PROFUNDIDAD_MAX = 3
 
+# Esperas (segundos) antes de reintentar las consultas de Drive que fallen
+# (errores momentaneos o limite de consultas): 2 reintentos.
+DRIVE_ESPERAS_REINTENTO = (1.5, 4.0)
+
 
 # ============================================================
 # CARGUES
