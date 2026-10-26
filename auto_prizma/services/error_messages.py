@@ -199,12 +199,23 @@ def extraer_codigo_error(texto):
 def mensaje_error(codigo_o_texto):
     """Devuelve la frase humana para un codigo (o texto con codigo).
 
-    Si no hay traduccion, devuelve el texto original sin tocar.
+    Si el motor anexo un detalle ("codigo: lo que paso"), la frase se
+    completa con ese detalle: el usuario ve que archivo pide el Excel o
+    donde esta la actividad repetida, no solo el codigo. Si no hay
+    traduccion, devuelve el texto original sin tocar.
     """
-    codigo = extraer_codigo_error(codigo_o_texto)
-    if codigo:
-        return MENSAJES_ERROR[codigo]
-    return str(codigo_o_texto or "")
+    texto = str(codigo_o_texto or "")
+    codigo = extraer_codigo_error(texto)
+    if not codigo:
+        return texto
+    base = MENSAJES_ERROR[codigo]
+    detalle = ""
+    posicion = texto.find(codigo)
+    if posicion >= 0:
+        detalle = texto[posicion + len(codigo):].lstrip(" \t:|-").strip()
+    if not detalle:
+        return base
+    return f"{base} Detalle: {detalle}"
 
 
 def es_codigo_error(texto):

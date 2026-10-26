@@ -321,6 +321,15 @@ def limpiar_prefijo_tecnico_recurso(
         )
     )[0]
 
+    # Copias de Google Drive: "archivo (1).h5p", "archivo (2).pdf".
+    # Sin quitar esto, el " (1)" deja el nombre mas largo que la actividad
+    # y el prefijo deja de coincidir (fallo real: filas 24 y 46).
+    nombre_sin_extension = re.sub(
+        r"\s*\(\d+\)$",
+        "",
+        nombre_sin_extension,
+    ).strip()
+
     nombre_n = normalizar_texto(
         nombre_sin_extension
     )
@@ -1205,6 +1214,13 @@ def puntuar_recurso(
         )
     )[0]
 
+    # Copias de Google Drive: "archivo (1).h5p".
+    nombre_sin_extension = re.sub(
+        r"\s*\(\d+\)$",
+        "",
+        nombre_sin_extension,
+    ).strip()
+
     archivo_n = normalizar_texto(
         nombre_sin_extension
     )
@@ -1252,13 +1268,21 @@ def puntuar_recurso(
 
     if palabras_actividad:
 
-        comunes = (
-            palabras_actividad
-            & palabras_archivo
+        # Tambien cuenta palabras cortadas por el paquete o por Drive:
+        # "investigac" reconoce "investigacion" y "problemas" a "problema".
+        comunes = sum(
+            1
+            for palabra in palabras_actividad
+            if any(
+                palabra == otra
+                or (len(otra) >= 4 and palabra.startswith(otra))
+                or otra.startswith(palabra)
+                for otra in palabras_archivo
+            )
         )
 
         porcentaje = (
-            len(comunes)
+            comunes
             / len(palabras_actividad)
         )
 
@@ -1390,6 +1414,37 @@ def prevalidar_recursos_drive_zip(
 # ============================================================
 # RESOLVER RECURSO
 # ============================================================
+
+def archivo_parecido_a_actividad(
+    actividad,
+    indice_recursos,
+    umbral=50,
+):
+    """Mejor archivo del ZIP parecido a la actividad aunque no llegue al
+    umbral de seleccion.
+
+    Sirve unicamente para explicar ERROR_RECURSO_NO_ENCONTRADO: decirle al
+    usuario que archivo si hay en el ZIP en vez de solo "no se encontro".
+    Devuelve "" si no hay nada medianamente parecido.
+    """
+    tipo = str(actividad.get("tipo_archivo") or "").upper()
+    extension = {"H5P": ".h5p", "PDF": ".pdf", "HTML": ".html"}.get(tipo)
+    if not extension:
+        return ""
+
+    mejor = ""
+    mejor_puntaje = umbral
+    for recurso in indice_recursos:
+        if recurso.get("extension") != extension:
+            continue
+        puntaje = puntuar_recurso(recurso["nombre"], actividad)
+        if recurso_es_prefijo_de_actividad(recurso["nombre"], actividad):
+            puntaje = max(puntaje, 99)
+        if puntaje >= mejor_puntaje:
+            mejor_puntaje = puntaje
+            mejor = recurso["nombre"]
+    return mejor
+
 
 def resolver_recurso(
     actividad,
@@ -1623,6 +1678,26 @@ def resolver_recurso(
                     )
 
             else:
+                referencia = str(actividad.get("enlace") or "").strip()
+                parecido = archivo_parecido_a_actividad(
+                    actividad,
+                    indice_recursos,
+                )
+                partes = []
+                if referencia:
+                    partes.append(
+                        f"el Excel pide '{referencia}' pero no está en el ZIP"
+                    )
+                if parecido:
+                    partes.append(
+                        f"hay un archivo parecido a la actividad: '{parecido}'"
+                    )
+                if partes:
+                    return (
+                        None,
+                        "ERROR_RECURSO_NO_ENCONTRADO: "
+                        + "; ".join(partes),
+                    )
                 return (
                     None,
                     "ERROR_RECURSO_NO_ENCONTRADO",
@@ -3003,6 +3078,31 @@ def _buscar_exacta_dos_intentos(
     )
 
 
+def _error_duplicada(coincidencias):
+    """ERROR_ACTIVIDAD_DUPLICADA con el texto de las filas repetidas.
+
+    Sin el detalle el usuario solo ve "esta duplicada" y no sabe ni cuantas
+    veces ni donde: con el texto que PRIZMA muestra (nombre, semana,
+    unidad) puede ubicarlas y borrar la que sobra.
+    """
+    textos = []
+    for coincidencia in coincidencias[:3]:
+        texto = re.sub(
+            r"\s+",
+            " ",
+            str(coincidencia.get("texto") or ""),
+        ).strip()
+        if texto and texto not in textos:
+            textos.append(texto[:200])
+    if not textos:
+        return "ERROR_ACTIVIDAD_DUPLICADA"
+    return (
+        "ERROR_ACTIVIDAD_DUPLICADA: aparece "
+        f"{len(coincidencias)} veces en PRIZMA — "
+        + " | ".join(f"«{texto}»" for texto in textos)
+    )
+
+
 # ============================================================
 # BUSCAR ACTIVIDAD
 # ============================================================
@@ -3102,10 +3202,19 @@ def buscar_actividad_correcta(
 
     if len(coincidencias) > 1:
         print("Coincidencias exactas:", len(coincidencias))
-        return (
-            None,
-            "ERROR_ACTIVIDAD_DUPLICADA",
+        # La tabla puede seguir re-renderizandose (carga asincrona) y la
+        # misma fila salir escaneada en dos paginas: un re-escaneo decide
+        # si la duplicidad es real antes de fallar.
+        reintento = _buscar_termino_estable(
+            pagina,
+            buscador,
+            actividad,
+            nombre_exacto,
         )
+        print("Coincidencias tras re-escaneo:", len(reintento))
+        if len(reintento) > 0:
+            coincidencias = reintento
+            termino_encontrado = nombre_exacto
 
     # Solo si los dos intentos exactos quedaron en cero usamos los fallbacks
     # existentes. La validación de la fila continúa siendo estricta.
@@ -3126,7 +3235,7 @@ def buscar_actividad_correcta(
                 print("Coincidencias exactas:", len(coincidencias_intento))
                 return (
                     None,
-                    "ERROR_ACTIVIDAD_DUPLICADA",
+                    _error_duplicada(coincidencias_intento),
                 )
 
             if len(coincidencias_intento) == 1:
@@ -3171,7 +3280,7 @@ def buscar_actividad_correcta(
     if len(coincidencias) > 1:
         return (
             None,
-            "ERROR_ACTIVIDAD_DUPLICADA",
+            _error_duplicada(coincidencias),
         )
 
     coincidencia = coincidencias[0]

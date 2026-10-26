@@ -339,3 +339,22 @@ def test_cargado_y_omitido_cuentan_como_subidas():
 
     curso = course_state.resumen_cursos()[0]
     assert (curso["total"], curso["subidas"], curso["faltantes"]) == (3, 2, 1)
+
+
+def test_mensaje_error_conserva_el_detalle_del_motor():
+    """El detalle que anexa el motor (archivo pedido, filas repetidas)
+    debe llegar al usuario junto con la frase humana."""
+    texto = (
+        "ERROR_RECURSO_NO_ENCONTRADO: el Excel pide "
+        "'PASO A PASO-Secuencia.h5p' pero no está en el ZIP"
+    )
+    assert extraer_codigo_error(texto) == "ERROR_RECURSO_NO_ENCONTRADO"
+    mensaje = mensaje_error(texto)
+    assert mensaje.startswith("La fila no tiene recurso")
+    assert "PASO A PASO-Secuencia.h5p" in mensaje
+
+    dup = (
+        "ERROR_ACTIVIDAD_DUPLICADA: aparece 2 veces en PRIZMA — "
+        "«Formulación del problema Semana 3»"
+    )
+    assert "Semana 3" in mensaje_error(dup)

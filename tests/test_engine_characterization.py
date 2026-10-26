@@ -344,3 +344,90 @@ def test_obtener_configuracion_reto():
 )
 def test_es_error_estructural_prizma(error, esperado):
     assert engine._es_error_estructural_prizma(error) is esperado
+
+
+# ============================================================
+# EMPAREJAR ARCHIVOS: COPIAS DE DRIVE (1) Y NOMBRES TRUNCADOS
+# ============================================================
+
+def test_limpia_sufijo_copia_de_drive():
+    # Regresion: el " (1)" que Drive pone a las copias rompia la
+    # comparacion y las filas 24 y 46 fallaron con ERROR_RECURSO_NO_ENCONTRADO
+    # aunque el archivo estaba en el ZIP.
+    assert (
+        engine.limpiar_prefijo_tecnico_recurso(
+            "ID003-Tema_4-Secuencia_para_construir_el_problema_de_investigac (1).h5p"
+        )
+        == "secuencia para construir el problema de investigac"
+    )
+
+
+def test_prefijo_de_actividad_acepta_copia_de_drive():
+    actividad = {
+        "nombre": "Secuencia para construir el problema de investigación",
+        "tipo_archivo": "H5P",
+    }
+    assert engine.recurso_es_prefijo_de_actividad(
+        "ID003-Tema_4-Secuencia_para_construir_el_problema_de_investigac (1).h5p",
+        actividad,
+    )
+
+
+def test_puntuar_recurso_supera_el_umbral_con_copia_y_truncamiento():
+    actividad = {
+        "nombre": "Secuencia para construir el problema de investigación",
+        "enlace": "",
+    }
+    puntaje = engine.puntuar_recurso(
+        "ID003-Tema_4-Secuencia_para_construir_el_problema_de_investigac (1).h5p",
+        actividad,
+    )
+    assert puntaje >= 100
+
+
+def test_los_dos_secuencia_no_se_confunden_entre_si():
+    # Filas 24 y 46 de la matriz real: cada archivo debe identificar solo
+    # a SU actividad (unico) y no cruzarse con la otra.
+    archivo_24 = "ID003-Tema_4-Secuencia_para_construir_el_problema_de_investigac (1).h5p"
+    archivo_46 = "ID003-Tema_4-Secuencia_metodologica_para_definir_muestra_y_sele (1).h5p"
+    actividad_24 = {
+        "nombre": "Secuencia para construir el problema de investigación",
+        "tipo_archivo": "H5P",
+        "fila_excel": "24",
+    }
+    actividad_46 = {
+        "nombre": "Secuencia metodológica para definir muestra y seleccionar participantes",
+        "tipo_archivo": "H5P",
+        "fila_excel": "46",
+    }
+    curso = [actividad_24, actividad_46]
+
+    assert engine.recurso_corto_es_unico_para_actividad(
+        archivo_24, actividad_24, curso
+    )
+    assert engine.recurso_corto_es_unico_para_actividad(
+        archivo_46, actividad_46, curso
+    )
+    assert not engine.recurso_corto_es_unico_para_actividad(
+        archivo_24, actividad_46, curso
+    )
+    assert not engine.recurso_corto_es_unico_para_actividad(
+        archivo_46, actividad_24, curso
+    )
+
+
+def test_error_duplicada_explica_donde_esta_la_repetida():
+    codigo = engine._error_duplicada([
+        {"texto": "Formulación del problema\nSemana 3\nUnidad 1"},
+        {"texto": "Formulación del problema\nSemana 8\nUnidad 2"},
+    ])
+    assert codigo.startswith("ERROR_ACTIVIDAD_DUPLICADA")
+    assert "2 veces" in codigo
+    assert "Semana 3" in codigo
+    assert "Semana 8" in codigo
+
+
+def test_error_duplicada_sin_textos_se_queda_en_codigo_puro():
+    # Sin filas que mostrar: el codigo queda exactamente igual para no
+    # romper los consumidores que lo comparan.
+    assert engine._error_duplicada([]) == "ERROR_ACTIVIDAD_DUPLICADA"
