@@ -155,6 +155,7 @@ auto-prizma-pro/
 
 - Instancia: `auto_prizma.core.application.app`; ASGI: `main:app`.
 - Middleware `exigir_sesion` (`api/routes/auth.py`): exige cookie `ap_sesion` salvo `RUTAS_PUBLICAS`; sin sesión → 303 a `/login`, o JSON 401 si la ruta empieza por `/estado/` o se acepta JSON. Fija `request.state.usuario` y `USUARIO_ACTUAL`.
+- **Uso local sin login** (decisión del usuario, 2026-10-26: trabaja solo en local): con `AUTO_PRIZMA_SIN_LOGIN=<usuario>` (`config.local_login_user()`, se lee en cada petición) el middleware y `GET /login` aceptan como ese usuario las peticiones **desde loopback** (`services.auth.local_login_user_for`, `is_loopback_request`), si el usuario existe y está activo. Desde otra IP se sigue pidiendo login aunque la variable esté definida: nunca definirla en Railway ni en servidores. Sin la variable, todo igual. `main.py` imprime «LOGIN DESACTIVADO…» al arrancar. Cubierto por `tests/test_local_login_bypass.py`. Las credenciales de PRIZMA de cada cargue NO cambian (son de la plataforma).
 - `/moodle` y sus endpoints de preview/publicación/reportes requieren sesión y comprueban que el cliente sea loopback. Se habilita localmente porque Chromium aparece en el mismo escritorio para login manual; no se publica en Railway ni en host remoto.
 - Rutas principales: ver tabla en `README.md` (sección "Rutas principales"). `/docs` existe pero exige sesión. `/app.css` y `/app.js` son públicas (están en `RUTAS_PUBLICAS`, las usa el login). `/estado-servicio` y `/google/validar-matriz` devuelven JSON (401 sin sesión si se pide JSON).
 - Endpoints que usan Playwright sync deben ser `def` (threadpool) o hilos propios, **nunca `async def`**.
@@ -243,6 +244,7 @@ Todo en `auto_prizma/core/config.py`. Variables de entorno documentadas en `.env
 | `AUTO_PRIZMA_COOKIE_SECURE` | en cada request | `"1"` fuerza cookie Secure |
 | `AUTO_PRIZMA_MAX_SIMULTANEOS` | al importar | `1` o `2` (otro valor → 2) |
 | `AUTO_PRIZMA_URL_PRIZMA` | al importar | URL de PRIZMA (vacía = producción `https://admin.prizma.site`; pruebas: `https://admin.prizma.solutions`) |
+| `AUTO_PRIZMA_SIN_LOGIN` | en cada petición | Usuario con el que se entra sin login, solo desde 127.0.0.1 (vacía = login normal). Solo para uso local |
 | `GOOGLE_CLIENT_ID` / `_SECRET` / `_REDIRECT_URI` | en cada llamada | OAuth |
 
 Otros parámetros: `PRIZMA_ESPERAS_REINTENTO_SESION` (reintentos de la sesión inicial), `PRIZMA_VACIAR_HTML_CON_H5P` (política temporal del campo Html en formato H5P), `FORMATOS_RECURSO_INTERACTIVO` / `FORMATO_RECURSO_POR_DEFECTO` / `EXTENSIONES_HTML` / `PRIZMA_VACIAR_RECURSO_CON_HTML` (formato HTML), `CHROMIUM_ARGS`, `VIEWPORT_NAVEGADOR`, límites de Google/Drive, `STATIC_DIR` / `APP_CSS_PATH` / `APP_JS_PATH` (recursos comunes de la interfaz), `HEALTH_CHROMIUM_TTL_SECONDS` / `HEALTH_PRIZMA_TTL_SECONDS` / `HEALTH_PRIZMA_TIMEOUT_SECONDS` (estado del servicio).
@@ -271,7 +273,7 @@ URL de desarrollo: `http://127.0.0.1:8000`. Para probar contra el ambiente de pr
 - Framework: **pytest** (incluido en `requirements.txt`). `tests/conftest.py` fija `AUTO_PRIZMA_DATA_DIR` en una carpeta temporal y crea el usuario `adminlocal`. PRIZMA y Playwright están simulados (`unittest.mock.patch`).
 
 ```powershell
-python -m pytest -q                                   # todo (≈50 s, 336 pruebas al 2026-10-26)
+python -m pytest -q                                   # todo (≈50 s, 340 pruebas al 2026-10-26)
 python -m pytest tests/test_test_parser.py -q         # un archivo
 python -m pytest tests/test_automation.py -k nombre   # una prueba
 ```

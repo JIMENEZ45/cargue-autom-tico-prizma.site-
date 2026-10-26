@@ -231,6 +231,7 @@ La referencia completa de variables sin valores está en `.env.example`. **La ap
 | `AUTO_PRIZMA_SECRET` | No | Clave de firma de las cookies de sesión. Si se omite, la app crea `data/secreto_sesion.txt`; define una para conservar sesiones de forma estable. |
 | `AUTO_PRIZMA_COOKIE_SECURE` | No | Déjala sin definir para `http://127.0.0.1`. `1` fuerza la cookie `Secure`; también se activa automáticamente si `GOOGLE_REDIRECT_URI` usa HTTPS. |
 | `AUTO_PRIZMA_MAX_SIMULTANEOS` | No | Cargues administrativos simultáneos: `1` o `2`. Predeterminado: `2`. |
+| `AUTO_PRIZMA_SIN_LOGIN` | No | Usuario (ya creado) con el que se entra **sin login**, solo desde el mismo equipo (`127.0.0.1`); desde otra IP se sigue pidiendo usuario y contraseña. Para uso local: no definirla en Railway ni en servidores. Vacía = login normal. Las credenciales de PRIZMA de cada cargue se siguen pidiendo. |
 | `AUTO_PRIZMA_URL_PRIZMA` | No | URL base del **panel administrativo** PRIZMA. Vacía = producción `https://admin.prizma.site`. El ambiente de pruebas es `https://admin.prizma.solutions`. |
 | `GOOGLE_CLIENT_ID` | Solo Google | ID del cliente OAuth tipo aplicación web, obtenido en Google Cloud Console. |
 | `GOOGLE_CLIENT_SECRET` | Solo Google | Secreto de ese cliente OAuth; mantenlo fuera de Git y no lo compartas. |
