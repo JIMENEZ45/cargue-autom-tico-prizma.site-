@@ -7,9 +7,11 @@ from auto_prizma.automation.prizma import engine as motor_prizma_modulo
 from auto_prizma.automation.prizma.engine import normalizar_texto
 import re
 import threading
+import time
 
 from auto_prizma.core.config import (
     DRIVE_BATCH_MAX,
+    DRIVE_ESPERAS_REINTENTO,
     DRIVE_PROFUNDIDAD_MAX,
 )
 from auto_prizma.services.auth import (
@@ -753,6 +755,72 @@ def _listar_archivos_carpeta_drive_oauth(url_carpeta):
         }
 
 
+def _texto_error_drive(exception):
+    """Motivo legible de un error de la API de Drive (para el aviso de la fila)."""
+    status = getattr(getattr(exception, "resp", None), "status", None)
+    try:
+        status = int(status)
+    except (TypeError, ValueError):
+        status = None
+    if status == 404:
+        return "Google Drive no encuentra el enlace o la cuenta de Google conectada no tiene acceso (404)"
+    if status == 403:
+        return "la cuenta de Google conectada no tiene permiso o se superó el límite de consultas (403)"
+    if status == 429:
+        return "se superó el límite de consultas a Google Drive (429)"
+    if status:
+        return f"Google Drive respondió con error {status}"
+    return "no se pudo consultar Google Drive (" + str(exception or "error desconocido")[:120] + ")"
+
+
+def _obtener_metadatos_drive_en_lote(drive, ids, campos):
+    """files().get en lotes, reintentando los que fallen (errores momentáneos de Google).
+
+    Devuelve (metadatos, errores): metadatos[id] es la respuesta o None; errores[id]
+    el motivo legible del último fallo.
+    """
+    metadatos = {}
+    errores = {}
+    pendientes = list(dict.fromkeys(str(drive_id) for drive_id in ids or []))
+    for intento, espera in enumerate((0,) + DRIVE_ESPERAS_REINTENTO):
+        if not pendientes:
+            break
+        if espera:
+            time.sleep(espera)
+        fallidos = []
+        for inicio in range(0, len(pendientes), DRIVE_BATCH_MAX):
+            grupo = pendientes[inicio:inicio + DRIVE_BATCH_MAX]
+            respuestas = {}
+
+            def callback(request_id, response, exception, respuestas=respuestas):
+                respuestas[str(request_id)] = (response, exception)
+
+            batch = drive.new_batch_http_request(callback=callback)
+            for drive_id in grupo:
+                batch.add(
+                    drive.files().get(fileId=drive_id, fields=campos, supportsAllDrives=True),
+                    request_id=drive_id,
+                )
+            try:
+                batch.execute()
+            except Exception as exc:
+                for drive_id in grupo:
+                    respuestas.setdefault(drive_id, (None, exc))
+            for drive_id in grupo:
+                response, exception = respuestas.get(drive_id, (None, None))
+                if exception is None and response:
+                    metadatos[drive_id] = response
+                    errores.pop(drive_id, None)
+                else:
+                    metadatos[drive_id] = None
+                    errores[drive_id] = _texto_error_drive(exception)
+                    fallidos.append(drive_id)
+        if fallidos:
+            print(f"Drive: {len(fallidos)} referencia(s) con error en el intento {intento + 1}")
+        pendientes = fallidos
+    return metadatos, errores
+
+
 def _precargar_referencias_drive_batch(actividades):
     """Precarga Drive rapido usando el tipo REAL del recurso, no solo la forma de la URL.
 
@@ -795,36 +863,15 @@ def _precargar_referencias_drive_batch(actividades):
     # --------------------------------------------------------
     # 1) Resolver referencias ambiguas por SU MIMETYPE REAL.
     #    open?id=... puede ser archivo o carpeta.
+    #    Se consultan SIEMPRE en cada análisis: antes se reutilizaba lo guardado
+    #    en memoria (también los errores) y un fallo momentáneo dejaba la fila
+    #    como "sin archivo" hasta reiniciar el servidor.
     # --------------------------------------------------------
-    ambiguas_pendientes = []
-    with _CACHE_REFERENCIAS_DRIVE_LOCK:
-        for drive_id in referencias_ambiguas:
-            if _clave_cache_drive(drive_id) not in _CACHE_REFERENCIAS_DRIVE:
-                ambiguas_pendientes.append(drive_id)
-
-    metadatos_ambiguos = {}
-
-    for inicio in range(0, len(ambiguas_pendientes), DRIVE_BATCH_MAX):
-        grupo = ambiguas_pendientes[inicio:inicio + DRIVE_BATCH_MAX]
-        respuestas = {}
-
-        def callback_meta(request_id, response, exception):
-            respuestas[str(request_id)] = None if exception is not None else response
-
-        batch = drive.new_batch_http_request(callback=callback_meta)
-        for drive_id in grupo:
-            batch.add(
-                drive.files().get(
-                    fileId=drive_id,
-                    fields="id,name,mimeType,size,shortcutDetails(targetId,targetMimeType)",
-                    supportsAllDrives=True,
-                ),
-                request_id=drive_id,
-            )
-        batch.execute()
-
-        for drive_id in grupo:
-            metadatos_ambiguos[drive_id] = respuestas.get(drive_id)
+    metadatos_ambiguos, errores_ambiguos = _obtener_metadatos_drive_en_lote(
+        drive,
+        list(referencias_ambiguas),
+        "id,name,mimeType,size,shortcutDetails(targetId,targetMimeType)",
+    )
 
     # Resolver shortcuts a archivos reales solo cuando existan.
     shortcut_archivos = {}
@@ -839,27 +886,12 @@ def _precargar_referencias_drive_batch(actividades):
             if target_id and target_mime != "application/vnd.google-apps.folder":
                 shortcut_archivos[original_id] = target_id
 
-    metadatos_targets = {}
     targets_unicos = list(dict.fromkeys(shortcut_archivos.values()))
-    for inicio in range(0, len(targets_unicos), DRIVE_BATCH_MAX):
-        grupo = targets_unicos[inicio:inicio + DRIVE_BATCH_MAX]
-        respuestas = {}
-
-        def callback_target(request_id, response, exception):
-            respuestas[str(request_id)] = None if exception is not None else response
-
-        batch = drive.new_batch_http_request(callback=callback_target)
-        for target_id in grupo:
-            batch.add(
-                drive.files().get(
-                    fileId=target_id,
-                    fields="id,name,mimeType,size",
-                    supportsAllDrives=True,
-                ),
-                request_id=target_id,
-            )
-        batch.execute()
-        metadatos_targets.update(respuestas)
+    metadatos_targets, errores_targets = _obtener_metadatos_drive_en_lote(
+        drive,
+        targets_unicos,
+        "id,name,mimeType,size",
+    )
 
     carpetas_reales = dict(carpetas_url)
     archivos_reales = 0
@@ -874,6 +906,7 @@ def _precargar_referencias_drive_batch(actividades):
                 _CACHE_REFERENCIAS_DRIVE[_clave_cache_drive(drive_id)] = {
                     "tipo": "error",
                     "target_id": drive_id,
+                    "error": errores_ambiguos.get(drive_id, ""),
                 }
                 _CACHE_ARCHIVOS_DRIVE[_clave_cache_drive(drive_id)] = None
                 continue
@@ -901,6 +934,7 @@ def _precargar_referencias_drive_batch(actividades):
                     _CACHE_REFERENCIAS_DRIVE[_clave_cache_drive(drive_id)] = {
                         "tipo": "error",
                         "target_id": target_id or drive_id,
+                        "error": errores_targets.get(target_id, ""),
                     }
                     _CACHE_ARCHIVOS_DRIVE[_clave_cache_drive(drive_id)] = None
                     continue
@@ -941,10 +975,9 @@ def _precargar_referencias_drive_batch(actividades):
     #    reales. Ahora tambien se entra en subcarpetas y atajos,
     #    pero seguimos pidiendo unicamente nombre + tamano.
     # --------------------------------------------------------
-    carpetas_pendientes = [
-        drive_id for drive_id in carpetas_reales
-        if _cache_drive_obtener(drive_id) is None
-    ]
+    # Se vuelven a listar en cada análisis: si se subieron archivos a Drive
+    # después de un análisis anterior, la carpeta guardada en memoria seguía vacía.
+    carpetas_pendientes = list(carpetas_reales)
 
     carpetas_con_subcarpetas = 0
     carpetas_vacias = 0
@@ -1005,5 +1038,5 @@ def _precargar_referencias_drive_batch(actividades):
     return {
         "total_carpetas": len(carpetas_reales),
         "total_archivos_directos": archivos_reales,
-        "consultadas_google": len(ambiguas_pendientes) + len(carpetas_pendientes) + len(targets_unicos),
+        "consultadas_google": len(referencias_ambiguas) + len(carpetas_pendientes) + len(targets_unicos),
     }

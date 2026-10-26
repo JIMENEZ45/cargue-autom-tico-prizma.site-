@@ -30,6 +30,7 @@ NAV_ITEMS = (
     ("inicio", "Inicio", "/", "inicio"),
     ("test", "Test", "/tests", "test"),
     ("auditor", "Auditor", "/auditor", "escudo"),
+    ("moodle", "Cargue Moodle", "/moodle", "moodle"),
     ("cargue", "Cargue actual", "/cargue-actual", "subir"),
     ("cursos", "Cursos", "/cursos", "libro"),
     ("historial", "Historial", "/historial", "historial"),

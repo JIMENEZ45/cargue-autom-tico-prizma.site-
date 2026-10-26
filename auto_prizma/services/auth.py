@@ -8,6 +8,7 @@ import threading
 import hmac
 import base64
 import hashlib
+import ipaddress
 import secrets
 import contextvars
 from datetime import (
@@ -26,6 +27,7 @@ from auto_prizma.core.config import (
     USUARIOS_PATH,
     cookie_secure_forced,
     google_redirect_uri,
+    local_login_user,
     session_secret_from_env,
 )
 
@@ -296,6 +298,31 @@ def _leer_sesion(valor):
 
 def _usuario_de_request(request):
     return _leer_sesion(request.cookies.get(SESION_COOKIE))
+
+
+def is_loopback_request(request):
+    """True si la petición viene del mismo equipo (127.0.0.1, ::1 o localhost)."""
+    host = str(request.client.host if getattr(request, "client", None) else "").split("%", 1)[0]
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host.lower() == "localhost"
+
+
+def local_login_user_for(request):
+    """Usuario con el que se entra SIN login (AUTO_PRIZMA_SIN_LOGIN), o None.
+
+    Solo aplica a peticiones desde el mismo equipo y a un usuario existente y
+    activo: aunque la variable se defina en un servidor, desde fuera se sigue
+    pidiendo usuario y contraseña.
+    """
+    usuario = _normalizar_usuario(local_login_user())
+    if not usuario or not is_loopback_request(request):
+        return None
+    registro = _cargar_usuarios().get(usuario)
+    if not registro or not registro.get("activo", True):
+        return None
+    return usuario
 
 
 def _usuario_actual():
