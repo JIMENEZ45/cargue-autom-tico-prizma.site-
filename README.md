@@ -111,6 +111,21 @@ Dentro de la app:
 - **Inicio** — sube la matriz y el ZIP y arranca el cargue.
 - **Cursos** — por curso: cuántas actividades ya están en PRIZMA y **por qué falta cada una** (mensaje legible, no código). Al volver a subir la matriz del mismo curso, **las pendientes se marcan solas** y las ya cargadas quedan sin marca: es el reintento sin tener que elegir una por una.
 - **Historial / Reportes** — cargues anteriores y su reporte CSV (columnas `Motivo` = explicación en español y `Hoja`).
+- **Cargue Moodle** — solo en local: publica PDF y H5P en un curso de Prizma (ver abajo).
+
+---
+
+## Cargue Moodle (local)
+
+En **http://127.0.0.1:8000/moodle** se publican recursos PDF/H5P directamente en un curso de Prizma (Moodle). Solo funciona con la app corriendo **en tu propio equipo**, porque abre un Chromium visible para que inicies sesión a mano (no está disponible en Railway ni en un servidor).
+
+1. Sube la matriz (CSV/XLSX), el ZIP con los PDF/H5P y el enlace del curso (`https://prizma.americana.edu.co/course/view.php?id=...`).
+2. Revisa la vista previa por semana: qué está listo, qué falta corregir y qué se sube a mano.
+3. Elige tipos de recurso y semanas, prueba con 1 recurso y luego publica los seleccionados.
+4. Inicia sesión en la ventana de Chromium. La app activa el *Modo de edición*, publica desde la semana 1 y no duplica lo que ya está en el curso. Puedes pausar o cancelar.
+5. Opcional: al terminar, puede borrar las etiquetas de bloque que la matriz no usa en cada semana publicada.
+
+Detalle completo en **`GUIA_DETALLADA.md`** → *Uso: cargue Moodle*.
 
 ---
 
@@ -145,5 +160,7 @@ Solo si vas a analizar matrices desde enlaces de Google Sheets o carpetas de Dri
 ## Despliegue (Railway)
 
 Sube a `main` para desplegar. Ver `Dockerfile` (instala deps + Chromium y arranca uvicorn en el puerto 8000).
+
+Alternativa gratuita: Oracle Cloud Always Free, ver [`docs/DEPLOY_ORACLE.md`](docs/DEPLOY_ORACLE.md).
 
 Documentación completa: ver **`GUIA_DETALLADA.md`**.

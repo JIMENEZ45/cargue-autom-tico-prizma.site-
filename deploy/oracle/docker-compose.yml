@@ -1,0 +1,59 @@
+# Despliegue de Auto Prizma Pro en un servidor propio (Oracle Cloud Always Free).
+# Guia completa: docs/DEPLOY_ORACLE.md
+#
+# Uso (desde esta carpeta, en el servidor):
+#   cp .env.example .env    y completar los valores
+#   docker compose up -d --build
+#
+# - app:   la aplicacion, construida con el Dockerfile de la raiz del repositorio.
+# - caddy: recibe el trafico en 80/443, obtiene el certificado HTTPS solo y lo
+#          reenvia a la app. La app no se expone directamente a internet.
+
+services:
+  app:
+    build:
+      context: ../..
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Usuarios, historial, reportes y tokens de Google van al volumen.
+      AUTO_PRIZMA_DATA_DIR: /app/data
+    # Igual que el CMD del Dockerfile, pero aceptando las cabeceras del proxy
+    # (Caddy) para que el bloqueo por intentos de login vea la IP real del usuario.
+    # Es seguro confiar en cualquier origen porque el puerto 8000 solo es
+    # accesible desde la red interna de Docker.
+    command:
+      - uvicorn
+      - main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    volumes:
+      # Tambien cubre <raiz>/data/tokens, donde los tests evaluativos guardan
+      # el usuario PRIZMA recordado (ignora AUTO_PRIZMA_DATA_DIR).
+      - ./data:/app/data
+    expose:
+      - "8000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Falta APP_DOMAIN en .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

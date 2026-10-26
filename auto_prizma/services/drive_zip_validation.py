@@ -486,6 +486,22 @@ def _prevalidar_recursos_drive_zip_ultrarapido(
                 continue
 
         else:
+            motivo = str(referencia.get("error") or "").strip()
+            if motivo:
+                # Drive respondió con error al consultar el enlace (no es que la carpeta esté vacía).
+                registrar_visual(
+                    actividad,
+                    "NO SE PUDO CONSULTAR EL ENLACE",
+                    estado="ENLACE_DRIVE_NO_LEGIBLE",
+                )
+                advertencias.append(_aviso(
+                    actividad,
+                    "DRIVE_UNREADABLE",
+                    "No se pudo consultar el enlace Drive de la columna G: " + motivo
+                    + ". Se reintentó; vuelve a analizar en unos minutos o revisa el acceso de la cuenta conectada.",
+                ))
+                bloquear_cargue(actividad, "ERROR_CARPETA_RECURSO_NO_ACCESIBLE")
+                continue
             registrar_visual(
                 actividad,
                 "NO HAY ARCHIVO EN LA CARPETA",

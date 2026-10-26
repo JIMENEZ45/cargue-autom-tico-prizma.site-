@@ -13,7 +13,7 @@ Construida con **FastAPI** y **Playwright (Chromium)**. Se despliega en **Railwa
 - [Tecnologías](#tecnologías)
 - [Estructura del proyecto](#estructura-del-proyecto)
 - [Instalación local](#instalación-local)
-- [Variables de entorno](#variables-de-entorno)
+- [Variables de entorno y credenciales](#variables-de-entorno-y-credenciales)
 - [Configurar Google (OAuth)](#configurar-google-oauth)
 - [Administración de usuarios](#administración-de-usuarios)
 - [Uso: cargue de actividades](#uso-cargue-de-actividades)
@@ -37,6 +37,7 @@ Construida con **FastAPI** y **Playwright (Chromium)**. Se despliega en **Railwa
 - **Seguimiento en vivo.** Página de progreso por cargue, con opción de cancelar.
 - **Historial y reportes.** Cada cargue genera un reporte CSV que se puede ver en pantalla o descargar.
 - **Tests evaluativos.** Lee un .docx con preguntas, lo valida, permite corregirlo en pantalla y lo crea en PRIZMA. Puede hacerse por separado (`/tests`) o junto con un cargue de actividades.
+- **Cargue Moodle local.** En `/moodle` analiza una matriz CSV/XLSX y un ZIP de PDF/H5P, muestra la vista previa por semana y publica en un curso Prizma con Chromium visible e inicio de sesión manual.
 - **Tema claro/oscuro** y diseño adaptable a móvil.
 
 ---
@@ -97,6 +98,7 @@ auto_prizma/                  Código de la aplicación
     uploads.py                Iniciar, seguir, cancelar y estado de cargues
     reports.py                Historial, reportes guardados y descargas
     health.py                 Estado del servicio en JSON (Chromium y PRIZMA)
+    moodle_resources.py       Vista previa, publicación y reportes del cargue Moodle local
   services/                   Lógica de negocio
     auth.py                   Usuarios, contraseñas, bloqueo por intentos y cookies de sesión
     matrix_analysis.py        Lectura de la matriz (CSV/Excel/Sheets) y análisis de matriz y ZIP
@@ -105,6 +107,7 @@ auto_prizma/                  Código de la aplicación
                               (crear, iniciar, cancelar y consultar trabajos)
     history.py                Historial de cargues y reportes CSV (por usuario)
     health.py                 Comprueba que Chromium esté instalado y que PRIZMA responda
+    moodle_resources.py       Lee matrices, extrae el ZIP, arma la vista previa y controla la publicación Moodle
   integrations/google/        Integración con Google
     oauth.py                  Conexión OAuth con Google por usuario
     drive.py                  Lectura de enlaces en Google Sheets, listado de carpetas de Drive y
@@ -113,14 +116,18 @@ auto_prizma/                  Código de la aplicación
     engine.py                 Motor de cargue: lectura de la matriz y automatización de PRIZMA
     engine_overrides.py       Ajustes que se aplican sobre el motor al arrancar
     html_field.py             Formato HTML: leer el .html, escribirlo en el campo Html y quitar el archivo previo de Recurso
+  automation/moodle/          Cliente visible para cursos Moodle/Prizma
+    client.py                 Inicio de sesión manual, detección de duplicados, publicación PDF/H5P y borrado de etiquetas
   domain/
     drive_resource_policy.py  Reglas para decidir qué recurso de Drive corresponde a cada actividad
     file_names.py             Nombre base y clave exacta de nombres de archivo
+    moodle_resources.py       Reglas de destinos, tipos de recurso, orden por semana y etiquetas sin uso (Moodle)
   web/
     layout.py                 Marco común de todas las páginas: menú lateral, estado del servicio,
                               tema claro/oscuro y menú del usuario
     icons.py                  Íconos SVG de la interfaz
     views.py                  Página de Inicio (análisis) y revisión antes del cargue
+    moodle_views.py           Vista previa, progreso y reporte del cargue Moodle
   evaluative_tests/           Módulo de tests evaluativos (cuestionarios en PRIZMA a partir de un .docx)
     models.py                 Estructuras de datos del documento (tests, secciones, preguntas)
     parser.py                 Lectura del .docx y conversión a esas estructuras
@@ -163,77 +170,129 @@ Dockerfile                  Imagen para despliegue
 | `GET /estado-servicio` | Estado de Chromium y de PRIZMA (JSON; lo consultan todas las páginas) |
 | `GET /app.css`, `GET /app.js` | Estilos y script comunes de la interfaz (públicos) |
 | `GET /tests` y `/tests/...` | Módulo de tests evaluativos |
+| `GET /moodle` y `/moodle/...` | Análisis, vista previa y publicación Moodle local (solo desde el mismo equipo) |
 
 ---
 
 ## Instalación local
 
-**Requisitos:** Python 3.12 o superior y Git.
+**Requisitos:** Windows 10/11 (los ejemplos siguientes son PowerShell), Git y Python 3.12 o posterior. Para usar el cargue Moodle local, ejecuta el servidor directamente en tu equipo: necesita abrir Chromium visible en tu escritorio.
 
 ```powershell
-git clone https://github.com/Kevin2428/auto-prizma-pro.git
-cd auto-prizma-pro
+git clone https://github.com/JIMENEZ45/cargue-autom-tico-prizma.site-.git
+Set-Location cargue-autom-tico-prizma.site-
 
-python -m venv .venv
-.\.venv\Scripts\pip install -r requirements-dev.txt
-.\.venv\Scripts\playwright install chromium
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-Crear el primer usuario y arrancar el servidor:
+`requirements-dev.txt` instala la aplicación y pytest. No se necesita Node.js para ejecutar Auto Prizma; MOODLE ya está integrado en la aplicación Python. Para instalar las dependencias de producción solamente, usa `requirements.txt` en lugar de `requirements-dev.txt`.
+
+Antes de arrancar, decide si usarás el panel administrativo PRIZMA de pruebas o producción. **Para desarrollo, apunta al ambiente de pruebas** y configura las variables en la misma ventana de PowerShell. No configures OAuth si solo vas a usar matrices CSV/XLSX:
 
 ```powershell
-.\.venv\Scripts\python scripts\manage_users.py crear
-.\.venv\Scripts\uvicorn main:app --reload
+$env:AUTO_PRIZMA_URL_PRIZMA = 'https://admin.prizma.solutions'
+$env:AUTO_PRIZMA_SECRET = (& .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_hex(32))").Trim()
+# Opcional: carpeta persistente fuera del repositorio.
+# $env:AUTO_PRIZMA_DATA_DIR = 'C:\AutoPrizma\data'
 ```
 
-Abrir http://127.0.0.1:8000 e iniciar sesión.
+Si usarás Sheets o Google Docs, define también las tres variables OAuth descritas en **Crear credenciales de Google OAuth**. Después crea el usuario local de Auto Prizma:
 
-> En Linux/macOS los ejecutables están en `.venv/bin/` en lugar de `.venv\Scripts\`.
+```powershell
+.\.venv\Scripts\python.exe scripts\manage_users.py crear
+```
+
+El comando pide usuario y contraseña dos veces; la contraseña no aparece en pantalla y debe tener al menos 8 caracteres. Después inicia el servidor en el mismo terminal:
+
+```powershell
+.\.venv\Scripts\python.exe -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+Abre exactamente `http://127.0.0.1:8000` e inicia sesión con el usuario recién creado. Mantén el terminal abierto mientras uses la aplicación; `Ctrl+C` detiene el servidor. No uses `localhost` para el flujo OAuth: el URI de retorno local está registrado como `127.0.0.1`.
+
+**Importante:** si omites `AUTO_PRIZMA_URL_PRIZMA`, el panel administrativo apunta a producción. No ejecutes un cargue real para “probar”; usa el ambiente de pruebas y datos autorizados. El cargue Moodle publica en el curso de la URL que ingreses.
+
+En Linux/macOS los ejecutables están en `.venv/bin/`. Instala Chromium con `python -m playwright install --with-deps chromium` (Linux) y arranca con `python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload`.
 
 ---
 
-## Variables de entorno
+## Variables de entorno y credenciales
 
-Ninguna es obligatoria para arrancar; las de Google son necesarias solo para usar la matriz por link. La lista completa (sin valores) está en `.env.example`; la app no lee archivos `.env` automáticamente, así que hay que definirlas en el entorno (o en Railway). Todas se leen en `auto_prizma/core/config.py`.
+La referencia completa de variables sin valores está en `.env.example`. **La aplicación no lee archivos `.env` automáticamente**: define las variables en el entorno antes de arrancar Uvicorn, o configúralas en el servicio de despliegue. En PowerShell, `$env:NOMBRE = "valor"` solo afecta esa ventana y sus procesos hijos; vuelve a definirlas al abrir otro terminal.
 
-| Variable | Descripción | Valor por defecto |
-|---|---|---|
-| `AUTO_PRIZMA_DATA_DIR` | Carpeta donde se guardan usuarios, tokens, historial y reportes. En producción debe apuntar a un volumen persistente. | `<proyecto>/data` |
-| `AUTO_PRIZMA_SECRET` | Clave para firmar las cookies de sesión. Si no se define, se genera una y se guarda en `data/secreto_sesion.txt`. | Generada automáticamente |
-| `AUTO_PRIZMA_COOKIE_SECURE` | `1` para marcar la cookie como `Secure` (solo HTTPS). También se activa sola si `GOOGLE_REDIRECT_URI` empieza por `https://`. | Desactivada |
-| `AUTO_PRIZMA_MAX_SIMULTANEOS` | Cargues que pueden correr a la vez. Solo admite `1` o `2`; cualquier otro valor se toma como `2`. | `2` |
-| `AUTO_PRIZMA_URL_PRIZMA` | URL de PRIZMA. Vacía = producción. Para probar sin tocar producción se usa el ambiente de pruebas `https://admin.prizma.solutions`; la pantalla muestra un aviso mientras no sea producción. | `https://admin.prizma.site` |
+### Variables de la aplicación
 
-### Probar en el ambiente de pruebas de PRIZMA
+| Variable | ¿Obligatoria? | Uso y valor predeterminado |
+|---|---:|---|
+| `AUTO_PRIZMA_DATA_DIR` | No | Carpeta para usuarios, tokens, sesión, historial, reportes y perfil Moodle. Predeterminado: `<proyecto>\data`. En local puedes dejar el predeterminado o elegir una ruta persistente fuera del repositorio. |
+| `AUTO_PRIZMA_SECRET` | No | Clave de firma de las cookies de sesión. Si se omite, la app crea `data/secreto_sesion.txt`; define una para conservar sesiones de forma estable. |
+| `AUTO_PRIZMA_COOKIE_SECURE` | No | Déjala sin definir para `http://127.0.0.1`. `1` fuerza la cookie `Secure`; también se activa automáticamente si `GOOGLE_REDIRECT_URI` usa HTTPS. |
+| `AUTO_PRIZMA_MAX_SIMULTANEOS` | No | Cargues administrativos simultáneos: `1` o `2`. Predeterminado: `2`. |
+| `AUTO_PRIZMA_URL_PRIZMA` | No | URL base del **panel administrativo** PRIZMA. Vacía = producción `https://admin.prizma.site`. El ambiente de pruebas es `https://admin.prizma.solutions`. |
+| `GOOGLE_CLIENT_ID` | Solo Google | ID del cliente OAuth tipo aplicación web, obtenido en Google Cloud Console. |
+| `GOOGLE_CLIENT_SECRET` | Solo Google | Secreto de ese cliente OAuth; mantenlo fuera de Git y no lo compartas. |
+| `GOOGLE_REDIRECT_URI` | Solo Google | URI local exacta: `http://127.0.0.1:8000/google/callback`. Debe registrarse también en Google Cloud Console. |
 
-En una terminal de PowerShell (la variable solo vale para esa terminal):
+Para crear una clave local `AUTO_PRIZMA_SECRET` aleatoria en PowerShell:
 
 ```powershell
-$env:AUTO_PRIZMA_URL_PRIZMA = "https://admin.prizma.solutions"
-python -m uvicorn main:app --reload
+$env:AUTO_PRIZMA_SECRET = (& .\.venv\Scripts\python.exe -c "import secrets; print(secrets.token_hex(32))").Trim()
 ```
 
-Al arrancar se imprime `PRIZMA: https://admin.prizma.solutions (AMBIENTE DE PRUEBAS)` y la página principal muestra el aviso. Las credenciales que se escriban son las del ambiente de pruebas. Para volver a producción basta con cerrar esa terminal (o `Remove-Item Env:AUTO_PRIZMA_URL_PRIZMA`) y reiniciar. En Railway no se define, así que allí siempre se usa producción.
-| `GOOGLE_CLIENT_ID` | ID del cliente OAuth de Google. | — |
-| `GOOGLE_CLIENT_SECRET` | Secreto del cliente OAuth de Google. | — |
-| `GOOGLE_REDIRECT_URI` | URL de retorno de Google: `https://<dominio>/google/callback`. | — |
+La app acepta el secreto en memoria del entorno y no lo muestra. No lo pegues en el README, el código, capturas o reportes. Si no defines la variable, la clave se genera y guarda localmente en `data/secreto_sesion.txt`, que está excluido de Git. Mantén el mismo secreto entre reinicios para conservar las sesiones firmadas.
+
+### Crear credenciales de Google OAuth
+
+Esto solo hace falta para leer matrices por enlace Google Sheets y Google Docs usados por los tests. Para matrices locales CSV/XLSX, el login de Auto Prizma, PRIZMA o Moodle, no necesitas configurar OAuth.
+
+1. En [Google Cloud Console](https://console.cloud.google.com/) crea o selecciona un proyecto.
+2. Habilita **Google Sheets API** y **Google Drive API**.
+3. Configura la pantalla de consentimiento OAuth. Si la aplicación queda en modo de prueba, agrega como usuario de prueba cada cuenta Google que se conectará.
+4. Crea un **ID de cliente OAuth** de tipo **Aplicación web**.
+5. En **URI de redireccionamiento autorizados**, registra exactamente `http://127.0.0.1:8000/google/callback`.
+6. Define las credenciales en el mismo PowerShell antes de arrancar:
+
+   ```powershell
+   $env:GOOGLE_CLIENT_ID = '<ID de cliente>'
+   $env:GOOGLE_CLIENT_SECRET = '<secreto del cliente>'
+   $env:GOOGLE_REDIRECT_URI = 'http://127.0.0.1:8000/google/callback'
+   ```
+
+   Los valores entre `< >` son marcadores: reemplázalos localmente y no subas esos valores a Git.
+
+7. Inicia sesión en Auto Prizma y pulsa **Conectar Google**. Cada usuario autoriza su propia cuenta; la app solicita permisos de solo lectura para Sheets y Drive. El token autorizado se guarda en `data/tokens/` (o en `AUTO_PRIZMA_DATA_DIR/tokens/`).
+
+### Qué credenciales usa cada flujo
+
+| Credencial | Cómo se crea/ingresa | ¿Se guarda? |
+|---|---|---|
+| Usuario y contraseña de **Auto Prizma** | Crea el usuario con `scripts/manage_users.py crear`. | Contraseña cifrada en `usuarios.json`. |
+| Cuenta de **Google** | Crea el cliente OAuth una vez; cada usuario conecta su cuenta desde la interfaz. | Token OAuth local por usuario; solo lectura. |
+| Cuenta del panel **PRIZMA** (`admin.prizma.site`) | La persona la ingresa cuando inicia un cargue administrativo. | No; se usa temporalmente durante ese cargue. |
+| Sesión del curso **Moodle/Prizma** | Inicia sesión manualmente en la ventana Chromium visible que abre `/moodle`. | Se conserva en el perfil local de Chromium de ese usuario; la contraseña no se almacena. |
+
+`AUTO_PRIZMA_URL_PRIZMA` configura el panel administrativo y no cambia el dominio del curso Moodle. El cargue Moodle requiere abrir Auto Prizma desde el mismo equipo en `http://127.0.0.1:8000`; no está disponible desde Railway, Oracle Cloud u otro servidor remoto.
+
+Las cuentas del panel administrativo PRIZMA y del curso Moodle las proporciona tu institución. Auto Prizma no las crea: solo crea usuarios para entrar a la aplicación local.
+
+### Usar el ambiente de pruebas del panel PRIZMA
+
+Para evitar modificar producción mientras validas el flujo administrativo, define la URL **antes de iniciar Uvicorn**:
+
+```powershell
+$env:AUTO_PRIZMA_URL_PRIZMA = 'https://admin.prizma.solutions'
+```
+
+Después arranca la aplicación como se indicó arriba. Verás un aviso de ambiente de pruebas. Las credenciales que ingreses deben corresponder a ese ambiente. Para volver a producción, cierra el terminal o ejecuta `Remove-Item Env:AUTO_PRIZMA_URL_PRIZMA` y reinicia. La variable se lee al importar la app. El flujo Moodle sigue usando la dirección del curso que ingreses en `/moodle`.
 
 ---
 
 ## Configurar Google (OAuth)
 
-La matriz por link y la lectura de carpetas de Drive usan la cuenta de Google **de cada usuario**, con permisos de **solo lectura** (`spreadsheets.readonly` y `drive.readonly`).
-
-1. En [Google Cloud Console](https://console.cloud.google.com/) crear (o elegir) un proyecto.
-2. Habilitar **Google Sheets API** y **Google Drive API**.
-3. Configurar la pantalla de consentimiento OAuth y agregar los permisos de solo lectura de Sheets y Drive.
-4. Crear credenciales **ID de cliente de OAuth** de tipo **Aplicación web**.
-5. En *URI de redireccionamiento autorizados* agregar la URL de la app terminada en `/google/callback`:
-   - Producción: `https://<dominio-de-railway>/google/callback`
-   - Local: `http://127.0.0.1:8000/google/callback`
-6. Copiar el ID y el secreto en `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y `GOOGLE_REDIRECT_URI`.
-
-Cada usuario pulsa **Conectar con Google** dentro de la app; su token queda en `data/tokens/` y puede desconectarlo cuando quiera.
+La matriz por enlace usa Google Sheets y Drive con permisos de solo lectura. Sigue los pasos de **Crear credenciales de Google OAuth** en la sección de variables. Cada usuario conecta su propia cuenta desde **Conectar Google**; su token se guarda localmente por usuario y puede desconectarlo desde el menú.
 
 ---
 
@@ -242,12 +301,12 @@ Cada usuario pulsa **Conectar con Google** dentro de la app; su token queda en `
 Los usuarios se gestionan desde la consola con `scripts/manage_users.py`. Todas las opciones piden los datos de forma interactiva y la contraseña no se muestra en pantalla.
 
 ```powershell
-python scripts/manage_users.py listar       # Lista los usuarios y si tienen Google conectado
-python scripts/manage_users.py crear        # Crea un usuario
-python scripts/manage_users.py clave        # Cambia la contraseña de un usuario
-python scripts/manage_users.py desactivar   # Impide el acceso sin borrar el usuario
-python scripts/manage_users.py activar      # Vuelve a permitir el acceso
-python scripts/manage_users.py borrar       # Elimina el usuario y su token de Google (pide confirmación; su historial se conserva)
+.\.venv\Scripts\python.exe scripts\manage_users.py listar       # Lista usuarios y si tienen Google conectado
+.\.venv\Scripts\python.exe scripts\manage_users.py crear        # Crea un usuario
+.\.venv\Scripts\python.exe scripts\manage_users.py clave        # Cambia la contraseña de un usuario
+.\.venv\Scripts\python.exe scripts\manage_users.py desactivar   # Impide el acceso sin borrar el usuario
+.\.venv\Scripts\python.exe scripts\manage_users.py activar      # Vuelve a permitir el acceso
+.\.venv\Scripts\python.exe scripts\manage_users.py borrar       # Elimina usuario y token Google (pide confirmación)
 ```
 
 La contraseña debe tener al menos 8 caracteres. Cada usuario también puede cambiar la suya desde **Mi contraseña** dentro de la app.
@@ -305,6 +364,25 @@ Cada cargue genera un CSV con las columnas: `Fila Excel`, `Programa`, `Curso`, `
 
 ---
 
+## Uso: cargue Moodle
+
+El apartado **Cargue Moodle** (`/moodle`) publica recursos PDF y H5P directamente en un curso de Prizma (Moodle). Es independiente del cargue del panel administrativo (`/analizar`).
+
+1. Ejecuta Auto Prizma **en el mismo equipo** donde vas a iniciar sesión y abre `http://127.0.0.1:8000/moodle`. No está disponible desde un servidor remoto (Railway u Oracle Cloud), porque necesita abrir Chromium visible en tu escritorio.
+2. Sube la matriz exportada (CSV/XLSX), el ZIP con los PDF/H5P y el enlace HTTPS del curso (`prizma.americana.edu.co/course/view.php?id=...`) y pulsa **Generar vista previa**.
+3. Revisa la vista previa:
+   - Un resumen (listos para publicar, por corregir, se suben a mano, semanas) y la lista **«Necesitan atención»** con lo que falta corregir en el ZIP o la matriz y por qué.
+   - **«Recursos por semana»**, organizada como el curso: cada semana con sus bloques *Recurso educativo digital*, *Recurso educativo audiovisual* y *Reto Evaluativo*. Los títulos de tema de la matriz se ignoran (no son recursos).
+   - Cada archivo se empareja por nombre con el «Nombre del recurso»; se quitan prefijos como `H5P -`, `PDF -` o `Infografía -`. Si varios archivos coinciden, la fila no se publica.
+4. En **«¿Qué quieres publicar?»** marca tipos de recurso (H5P, infografía, video avatar, PDF, reto) y semanas, o filas sueltas. Usa **Probar con 1 recurso** primero y luego **Publicar seleccionados**.
+5. Se abre Chromium: inicia sesión a mano (se espera hasta 2 minutos). La app activa el **Modo de edición**, publica **desde la semana 1** y, antes de cada recurso, comprueba si ya está en la semana para **no duplicarlo**. La pantalla muestra el avance en vivo y permite **Pausar**, **Reanudar** y **Cancelar** (actúan entre recursos, nunca a mitad de una subida).
+6. Opcional: marca **«Al terminar, borrar las etiquetas que la matriz no usa»**. Al final, en cada semana publicada, borra las etiquetas de bloque sin recursos en la matriz (⋮ → Borrar → confirmar). Nunca en la prueba de 1 recurso y nunca recursos, solo etiquetas. No se puede deshacer.
+7. Revisa el resultado (con **Reintentar los que no se cargaron**) y descarga el reporte CSV/JSON.
+
+Los archivos de trabajo quedan en `uploads/moodle/`, los reportes en `data/reportes/moodle/` y el perfil local de Chromium (con la sesión de Moodle, sin contraseña) en `data/moodle_profiles/`. La matriz original no se modifica.
+
+---
+
 ## Uso: tests evaluativos
 
 Los tests se crean en PRIZMA a partir de un documento Word. Se pueden cargar desde **Test** (`/tests`) o marcando *Test evaluativo* en el cargue de actividades. En este último caso se piden los datos académicos en el formato `CódigoPrograma CódigoPensum CódigoAsignatura NombreAsignatura`, separados por espacios o guiones, y el semestre.
@@ -357,6 +435,8 @@ Todo lo que debe sobrevivir a un reinicio se guarda en `AUTO_PRIZMA_DATA_DIR` (p
 | `tokens/` | Tokens de Google de cada usuario |
 | `historial.json` | Registro de cargues realizados |
 | `reportes/` | Reportes CSV de cada cargue |
+| `reportes/moodle/` | Reportes JSON/CSV de los cargues Moodle |
+| `moodle_profiles/` | Perfil local de Chromium para Moodle, separado por usuario |
 
 Las carpetas `uploads/` y `temp/` guardan archivos de trabajo temporales.
 
@@ -373,6 +453,7 @@ La carpeta `data/` está en `.gitignore` y **nunca debe subirse al repositorio**
 - **Intentos fallidos:** tras 5 intentos fallidos el acceso se bloquea 120 segundos.
 - **Aislamiento entre usuarios:** cada persona solo ve y controla sus propios cargues, reportes e historial.
 - **Credenciales de PRIZMA:** se piden en cada cargue y se mantienen solo en memoria mientras dura; no se escriben en archivos.
+- **Moodle local:** `/moodle` solo acepta solicitudes desde el mismo equipo (loopback) y cada usuario solo ve sus trabajos. El perfil de Chromium guarda la sesión de Moodle por usuario en `data/moodle_profiles/`, nunca la contraseña.
 - **Google:** cada usuario autoriza su propia cuenta, con permisos de solo lectura.
 
 ---
@@ -393,12 +474,16 @@ Configuración recomendada del servicio:
 3. **Red:** el contenedor escucha en el puerto **8000**.
 4. **Volver atrás:** si un despliegue falla, en *Deployments* se puede hacer *Rollback* al anterior.
 
+### Alternativa gratuita: Oracle Cloud Always Free
+
+Para desplegar sin pagar servidor, en una máquina virtual gratuita de Oracle Cloud con HTTPS automático (Caddy) y un subdominio gratis (DuckDNS): ver [`docs/DEPLOY_ORACLE.md`](docs/DEPLOY_ORACLE.md). Los archivos están en `deploy/oracle/` y reutilizan el mismo `Dockerfile`. El cargue Moodle no funciona allí (necesita Chromium visible en tu equipo).
+
 ---
 
 ## Pruebas
 
 ```powershell
-.\.venv\Scripts\python -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
 Las pruebas usan una carpeta de datos temporal (ver `tests/conftest.py`), así que no tocan los usuarios ni los reportes reales. Las pruebas de automatización simulan PRIZMA: no abren el navegador ni se conectan al sitio real.
@@ -432,3 +517,8 @@ Para probar manualmente la conexión con PRIZMA (abre un navegador visible y esp
 | Tras un despliegue desaparecieron los usuarios o reportes | Falta el volumen persistente o `AUTO_PRIZMA_DATA_DIR` no apunta a él. |
 | En el log aparece *"AVISO: existe data/google_token.json"* | Es un token compartido de una versión anterior que ya no se usa; revocarlo en https://myaccount.google.com/permissions y borrar el archivo. |
 | Una hoja de la matriz no aparece en el análisis | Revisar que la columna A tenga el texto **Semana correspondiente** en alguna de las primeras 30 filas. |
+| `ModuleNotFoundError: playwright` o falta el ejecutable Chromium | Desde la raíz instala `requirements-dev.txt` y ejecuta `.\.venv\Scripts\python.exe -m playwright install chromium`. |
+| La autorización Google falla con `redirect_uri_mismatch` | Usa el mismo host y puerto al abrir la app y en Google Cloud: `127.0.0.1:8000`; la ruta debe terminar en `/google/callback`. |
+| `/moodle` muestra que solo está disponible localmente | Abre la app en el mismo equipo con `http://127.0.0.1:8000`; la ruta no funciona en Railway, Oracle Cloud ni por una IP remota. |
+| Moodle no reconoce un `.h5p` | Revisa que la vista previa muestre una coincidencia única, que el nombre corresponda al recurso y que el ZIP incluya el `.h5p`. Durante publicación debe abrirse Chromium visible; completa allí el inicio de sesión y deja la ventana abierta. |
+| PRIZMA de administración abre producción | Define `AUTO_PRIZMA_URL_PRIZMA=https://admin.prizma.solutions` antes de iniciar Uvicorn y confirma que el aviso de ambiente de pruebas aparezca en la app. |
