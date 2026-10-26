@@ -31,6 +31,7 @@ from auto_prizma.services.auth import (
     _registrar_fallo,
     _usuario_actual,
     _usuario_de_request,
+    local_login_user_for,
 )
 
 
@@ -102,7 +103,8 @@ async def exigir_sesion(request: FastAPIRequest, call_next):
     if ruta in RUTAS_PUBLICAS:
         return await call_next(request)
 
-    usuario = _usuario_de_request(request)
+    # Sin login solo en local (AUTO_PRIZMA_SIN_LOGIN y petición desde 127.0.0.1).
+    usuario = _usuario_de_request(request) or local_login_user_for(request)
 
     if not usuario:
         acepta = str(request.headers.get("accept") or "")
@@ -126,7 +128,7 @@ async def exigir_sesion(request: FastAPIRequest, call_next):
 
 @app.get("/login", response_class=HTMLResponse)
 def login_formulario(request: FastAPIRequest):
-    if _usuario_de_request(request):
+    if _usuario_de_request(request) or local_login_user_for(request):
         return RedirectResponse("/", status_code=303)
 
     return HTMLResponse(_pagina_login())

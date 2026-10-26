@@ -53,6 +53,7 @@ La app **funciona sin ninguna**. Todas tienen valor por defecto. Solo se definen
 | `AUTO_PRIZMA_URL_PRIZMA` | URL de PRIZMA. Vacío = producción | `https://admin.prizma.site` |
 | `AUTO_PRIZMA_DATA_DIR` | Carpeta de datos | `./data` |
 | `AUTO_PRIZMA_MAX_SIMULTANEOS` | Cargues a la vez (1 o 2) | `2` |
+| `AUTO_PRIZMA_SIN_LOGIN` | Entrar sin usuario/contraseña **solo en tu equipo** (ver *Entrar*) | — (login normal) |
 
 **La app NO lee `.env` automáticamente.** Para usar Google, defines las variables en la terminal antes de arrancar (o usa `./arrancar.sh` en macOS/Linux, que las carga desde `.env`).
 
@@ -105,6 +106,13 @@ La contraseña debe tener **mínimo 8 caracteres**. Pedirá usuario, nombre a mo
 ## Entrar
 
 Ve a **http://127.0.0.1:8000/login** con el usuario y contraseña que creaste.
+
+**Sin login (solo en tu equipo):** define la variable con tu usuario antes de arrancar y entrarás directo, sin usuario ni contraseña. Solo funciona desde `127.0.0.1`: desde otra IP se sigue pidiendo login. No la definas en Railway ni en un servidor.
+
+```powershell
+$env:AUTO_PRIZMA_SIN_LOGIN = "tu-usuario"
+uvicorn main:app --port 8000
+```
 
 Dentro de la app:
 

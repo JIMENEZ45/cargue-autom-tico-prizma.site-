@@ -24,6 +24,8 @@ from zoneinfo import ZoneInfo
 #   AUTO_PRIZMA_MAX_SIMULTANEOS limite de cargues simultaneos (1 o 2)
 #   GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REDIRECT_URI
 #   AUTO_PRIZMA_URL_PRIZMA      URL de PRIZMA (vacio = produccion)
+#   AUTO_PRIZMA_SIN_LOGIN       usuario con el que se entra SIN login, solo desde
+#                               127.0.0.1 (uso local; vacio = login normal)
 #
 # Las variables de Google y de la cookie se leen en CADA llamada (no al
 # importar), igual que antes de centralizarlas.
@@ -239,6 +241,14 @@ def _resolver_url_prizma(valor):
     if not url.lower().startswith(("http://", "https://")):
         url = "https://" + url
     return url
+
+
+def local_login_user():
+    """Usuario para entrar sin login desde el mismo equipo (AUTO_PRIZMA_SIN_LOGIN).
+
+    Se lee en cada petición. Vacío = siempre se pide usuario y contraseña.
+    """
+    return env_str("AUTO_PRIZMA_SIN_LOGIN")
 
 
 PRIZMA_BASE_URL = _resolver_url_prizma(env_str("AUTO_PRIZMA_URL_PRIZMA"))
