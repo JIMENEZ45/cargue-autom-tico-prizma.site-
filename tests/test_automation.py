@@ -941,7 +941,7 @@ def test_ejecutar_cargue_honors_cancellation():
         mock_context.new_page.return_value = mock_page
 
         automator.login = MagicMock(return_value=True)
-        automator.navegar_a_crear_test = MagicMock()
+        automator.navegar_a_crear_test = MagicMock(return_value=False)
         automator.seleccionar_mui = MagicMock()
         automator.llenar_descripcion_test = MagicMock()
         automator.inyectar_json_test = MagicMock(return_value=True)

@@ -326,7 +326,7 @@ async def analyze_tests(
 def review_tests(request: Request, job_id: str):
     job = _job_for(request, job_id)
     if not job:
-        return HTMLResponse(_layout("Test", '<section class="panel"><div class="issue error">Análisis no encontrado.</div><a class="boton" href="/tests">Volver</a></section>'), status_code=404)
+        return HTMLResponse(_layout("Test", '<section class="panel"><div class="issue error">⚠️ Este análisis ya no existe en el servidor. Normalmente pasa si el servidor se reinició con la página abierta (los análisis se guardan solo en memoria, no en disco). Sube el documento de nuevo para generar un análisis nuevo.</div><a class="boton" href="/tests">Volver</a></section>'), status_code=404)
     return HTMLResponse(_render_review(job_id, job))
 
 
@@ -334,7 +334,7 @@ def review_tests(request: Request, job_id: str):
 def save_review(request: Request, job_id: str, payload: str = Form(...)):
     job = _job_for(request, job_id)
     if not job:
-        return HTMLResponse(_layout("Test", '<section class="panel"><div class="issue error">Análisis no encontrado.</div></section>'), status_code=404)
+        return HTMLResponse(_layout("Test", '<section class="panel"><div class="issue error">⚠️ Este análisis ya no existe en el servidor. Normalmente pasa si el servidor se reinició con la página abierta (los análisis se guardan solo en memoria, no en disco). Sube el documento de nuevo para generar un análisis nuevo.</div></section>'), status_code=404)
     try:
         data = json.loads(payload)
         document = document_from_dict(data)
@@ -348,7 +348,7 @@ def save_review(request: Request, job_id: str, payload: str = Form(...)):
 def download_tests(request: Request, job_id: str, indice: int | None = None):
     job = _job_for(request, job_id)
     if not job:
-        return JSONResponse({"error": "Análisis no encontrado"}, status_code=404)
+        return JSONResponse({"error": "Este análisis ya no existe en el servidor. Normalmente pasa si el servidor se reinició con la página abierta (los análisis se guardan solo en memoria, no en disco). Sube el documento de nuevo para generar un análisis nuevo."}, status_code=404)
     document: TestDocument = job["document"]
     if indice is not None:
         if indice < 0 or indice >= len(document.tests):
@@ -384,7 +384,7 @@ async def ejecutar_prizma(
 ):
     job = _job_for(request, job_id)
     if not job:
-        return HTMLResponse(_layout("Test", '<section class="panel"><div class="issue error">Análisis no encontrado.</div></section>'), status_code=404)
+        return HTMLResponse(_layout("Test", '<section class="panel"><div class="issue error">⚠️ Este análisis ya no existe en el servidor. Normalmente pasa si el servidor se reinició con la página abierta (los análisis se guardan solo en memoria, no en disco). Sube el documento de nuevo para generar un análisis nuevo.</div></section>'), status_code=404)
 
     user = _user(request)
     recordar = bool(recordar_credenciales)
@@ -436,7 +436,7 @@ async def ejecutar_prizma(
 def status_prizma(request: Request, job_id: str):
     job = _job_for(request, job_id)
     if not job:
-        return HTMLResponse(_layout("Test", '<section class="panel"><div class="issue error">Análisis no encontrado.</div></section>'), status_code=404)
+        return HTMLResponse(_layout("Test", '<section class="panel"><div class="issue error">⚠️ Este análisis ya no existe en el servidor. Normalmente pasa si el servidor se reinició con la página abierta (los análisis se guardan solo en memoria, no en disco). Sube el documento de nuevo para generar un análisis nuevo.</div></section>'), status_code=404)
 
     with _AUTOMATION_LOCK:
         auto_state = _AUTOMATION_JOBS.get(job_id)
@@ -450,7 +450,7 @@ def status_prizma(request: Request, job_id: str):
     rows_tests = []
     for item in auto_state.get("detalle_tests", []):
         st = item.get("estado", "pendiente")
-        badge_mod = "ok" if st == "exitoso" else "error" if st == "error" else "proceso" if st == "en_proceso" else "pendiente"
+        badge_mod = "ok" if st == "exitoso" else "error" if st == "error" else "proceso" if st == "en_proceso" else "omitido" if st == "omitido" else "pendiente"
         badge_txt = (
             "✓ Guardado"
             if (st == "exitoso" and not es_sim)
@@ -460,6 +460,8 @@ def status_prizma(request: Request, job_id: str):
             if st == "error"
             else "⏳ En proceso..."
             if st == "en_proceso"
+            else "⏭ Omitido"
+            if st == "omitido"
             else "⚪ En espera"
         )
         rows_tests.append(
@@ -544,6 +546,10 @@ def status_prizma(request: Request, job_id: str):
         <div class="kpi-card kpi-card--ok">
             <div class="kpi-label">{'✓ Validados' if es_sim else '✅ Guardados'}</div>
             <div id="kpi-exitosos" class="kpi-valor">{auto_state.get('exitosos', 0)}</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">⏭ Omitidos (ya cargados)</div>
+            <div id="kpi-omitidos" class="kpi-valor">{auto_state.get('omitidos', 0)}</div>
         </div>
         <div class="kpi-card kpi-card--warn">
             <div class="kpi-label">⏳ Faltantes / En Cola</div>
@@ -637,6 +643,9 @@ def status_prizma(request: Request, job_id: str):
                 if (item.estado === "exitoso") {{
                     b.className = "badge-dinamico badge-dinamico--ok";
                     b.textContent = esSimulacion ? "✓ Validado" : "✓ Guardado";
+                }} else if (item.estado === "omitido") {{
+                    b.className = "badge-dinamico badge-dinamico--omitido";
+                    b.textContent = "⏭ Omitido";
                 }} else if (item.estado === "error") {{
                     b.className = "badge-dinamico badge-dinamico--error";
                     b.textContent = "❌ Error";
@@ -663,10 +672,12 @@ def status_prizma(request: Request, job_id: str):
                 if (data.total !== undefined) {{
                     const elTotal = document.getElementById("kpi-total");
                     const elExitosos = document.getElementById("kpi-exitosos");
+                    const elOmitidos = document.getElementById("kpi-omitidos");
                     const elPendientes = document.getElementById("kpi-pendientes");
                     const elFallidos = document.getElementById("kpi-fallidos");
                     if (elTotal) elTotal.textContent = data.total;
                     if (elExitosos) elExitosos.textContent = data.exitosos || 0;
+                    if (elOmitidos) elOmitidos.textContent = data.omitidos || 0;
                     if (elPendientes) elPendientes.textContent = data.pendientes !== undefined ? data.pendientes : (data.total - (data.procesados || 0));
                     if (elFallidos) elFallidos.textContent = data.fallidos || 0;
 
@@ -793,7 +804,7 @@ def status_prizma(request: Request, job_id: str):
 def status_prizma_json(request: Request, job_id: str):
     job = _job_for(request, job_id)
     if not job:
-        return JSONResponse({"error": "Análisis no encontrado"}, status_code=404)
+        return JSONResponse({"error": "Este análisis ya no existe en el servidor. Normalmente pasa si el servidor se reinició con la página abierta (los análisis se guardan solo en memoria, no en disco). Sube el documento de nuevo para generar un análisis nuevo."}, status_code=404)
     with _AUTOMATION_LOCK:
         auto_state = _AUTOMATION_JOBS.get(job_id)
     if not auto_state:
@@ -805,7 +816,7 @@ def status_prizma_json(request: Request, job_id: str):
 def cancelar_prizma(request: Request, job_id: str):
     job = _job_for(request, job_id)
     if not job:
-        return JSONResponse({"error": "Análisis no encontrado"}, status_code=404)
+        return JSONResponse({"error": "Este análisis ya no existe en el servidor. Normalmente pasa si el servidor se reinició con la página abierta (los análisis se guardan solo en memoria, no en disco). Sube el documento de nuevo para generar un análisis nuevo."}, status_code=404)
     with _AUTOMATION_LOCK:
         auto_state = _AUTOMATION_JOBS.get(job_id)
     if not auto_state:
@@ -821,7 +832,7 @@ def cancelar_prizma(request: Request, job_id: str):
 def seleccionar_asignatura(request: Request, job_id: str, asignatura: str = Form(...)):
     job = _job_for(request, job_id)
     if not job:
-        return JSONResponse({"error": "Análisis no encontrado"}, status_code=404)
+        return JSONResponse({"error": "Este análisis ya no existe en el servidor. Normalmente pasa si el servidor se reinició con la página abierta (los análisis se guardan solo en memoria, no en disco). Sube el documento de nuevo para generar un análisis nuevo."}, status_code=404)
     with _AUTOMATION_LOCK:
         auto_state = _AUTOMATION_JOBS.get(job_id)
         sync_obj = _AUTOMATION_SYNC.get(job_id)

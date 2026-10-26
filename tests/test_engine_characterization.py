@@ -281,12 +281,12 @@ def test_guardar_resultado_writes_utf8_bom_csv_with_header_once(ruta_matriz, tmp
     assert contenido.startswith(b"\xef\xbb\xbf")
     filas = list(csv.reader(io.StringIO(contenido.decode("utf-8-sig"))))
     assert filas == [
-        ["Fila Excel", "Programa", "Curso", "Semana", "Unidad", "Actividad",
-         "Categoría", "Tipo", "Recurso", "Resultado", "Observación"],
-        ["5", "Administración de Empresas", "Contabilidad I", "1", "Unidad 1",
-         "Infografía de costos", "OVI", "H5P", "Infografia_de_costos.h5p", "OK", "obs"],
-        ["6", "Administración de Empresas", "Contabilidad I", "1", "Unidad 1",
-         "Lectura guía", "OVI", "PDF", "", "ERROR", "ERROR_X"],
+        ["Fila Excel", "Hoja", "Programa", "Curso", "Semana", "Unidad", "Actividad",
+         "Categoría", "Tipo", "Recurso", "Resultado", "Observación", "Motivo"],
+        ["5", "Curso A", "Administración de Empresas", "Contabilidad I", "1", "Unidad 1",
+         "Infografía de costos", "OVI", "H5P", "Infografia_de_costos.h5p", "OK", "obs", ""],
+        ["6", "Curso A", "Administración de Empresas", "Contabilidad I", "1", "Unidad 1",
+         "Lectura guía", "OVI", "PDF", "", "ERROR", "ERROR_X", ""],
     ]
 
 

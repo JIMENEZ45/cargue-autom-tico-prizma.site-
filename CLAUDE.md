@@ -99,7 +99,7 @@ auto-prizma-pro/
 ├── tests/                          # pytest (PRIZMA y Playwright simulados)
 ├── static/                        # auto_prizma_logo.png, app.css (estilos comunes) y app.js (comportamiento común)
 ├── .env.example                    # Variables soportadas (sin valores)
-├── requirements.txt / requirements-dev.txt (añade pytest)
+├── requirements.txt                     # pytest ya incluido (no hay requirements-dev.txt)
 ├── Dockerfile                      # python:3.12, playwright chromium, uvicorn main:app :8000
 ├── deploy/oracle/                  # Despliegue gratuito en Oracle Cloud: docker-compose (app + Caddy HTTPS),
 │                                   # Caddyfile, .env.example, setup-server.sh
@@ -254,7 +254,7 @@ py -m venv .venv
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -r requirements-dev.txt
+python -m pip install -r requirements.txt
 python -m playwright install chromium
 python scripts/manage_users.py crear
 python -m uvicorn main:app --reload
@@ -266,7 +266,7 @@ URL de desarrollo: `http://127.0.0.1:8000`. Para probar contra el ambiente de pr
 
 ## Tests
 
-- Framework: **pytest** (`requirements-dev.txt`). `tests/conftest.py` fija `AUTO_PRIZMA_DATA_DIR` en una carpeta temporal y crea el usuario `adminlocal`. PRIZMA y Playwright están simulados (`unittest.mock.patch`).
+- Framework: **pytest** (incluido en `requirements.txt`). `tests/conftest.py` fija `AUTO_PRIZMA_DATA_DIR` en una carpeta temporal y crea el usuario `adminlocal`. PRIZMA y Playwright están simulados (`unittest.mock.patch`).
 
 ```powershell
 python -m pytest -q                                   # todo (≈50 s, 313 pruebas al 2026-10-21)
@@ -381,7 +381,7 @@ git fetch origin; git rev-list --count HEAD..origin/main   # ¿rama atrasada?
 - Archivos grandes pendientes de dividir: `engine.py` (~5800), `web/views.py` (~1300, la mitad es CSS/JS propio de Inicio), `evaluative_tests/automation.py` (~1090), `integrations/google/drive.py` (~920), `evaluative_tests/routes.py` (~910), `services/upload_jobs.py` (~700; candidato: separar creación de trabajos y cola), `services/drive_zip_validation.py` (~680).
 - Duplicaciones pendientes: lógica de login en PRIZMA repetida (motor, validación y tests evaluativos). Nombres de archivo: el nombre base y la clave exacta ya están unificados en `domain/file_names.py`; quedan dos normalizaciones con semántica DISTINTA a propósito — `engine.clave_nombre_archivo_exacto` (ignora mayúsculas) y `drive_resource_policy._normalized_name` (canónica: guiones, espacios y mayúsculas). Unificarlas cambiaría qué archivos se emparejan: requiere decisión del usuario.
 - **Interfaz**: en las capturas de página completa el fondo blanco del menú lateral termina a la altura de la ventana (el menú es `sticky`); en el navegador no se nota. El módulo de tests conserva su propio CSS (en `evaluative_tests/views.py`, ya con variables de color) con reglas globales (`button`, `input`, `label`, `p`): los controles del marco usan selectores más específicos para no heredarlas.
-- `.venv` local creado antes de que `main` añadiera `python-docx`: ejecutar `python -m pip install -r requirements-dev.txt` o la app no arranca.
+- `.venv` local creado antes de que `main` añadiera `python-docx`: ejecutar `python -m pip install -r requirements.txt` o la app no arranca.
 
 ## Decisiones arquitectónicas
 
