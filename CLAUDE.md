@@ -95,7 +95,8 @@ auto-prizma-pro/
 │       └── routes.py               # APIRouter /tests/...
 ├── scripts/
 │   ├── manage_users.py             # CLI de usuarios
-│   └── check_prizma_connection.py  # Prueba manual: navegador visible, login manual, no modifica nada
+│   ├── check_prizma_connection.py  # Prueba manual: navegador visible, login manual, no modifica nada
+│   └── run_local.ps1               # Arranque local sin login (AUTO_PRIZMA_SIN_LOGIN, -Usuario, -Puerto)
 ├── tests/                          # pytest (PRIZMA y Playwright simulados)
 ├── static/                        # auto_prizma_logo.png, app.css (estilos comunes) y app.js (comportamiento común)
 ├── .env.example                    # Variables soportadas (sin valores)
@@ -155,7 +156,7 @@ auto-prizma-pro/
 
 - Instancia: `auto_prizma.core.application.app`; ASGI: `main:app`.
 - Middleware `exigir_sesion` (`api/routes/auth.py`): exige cookie `ap_sesion` salvo `RUTAS_PUBLICAS`; sin sesión → 303 a `/login`, o JSON 401 si la ruta empieza por `/estado/` o se acepta JSON. Fija `request.state.usuario` y `USUARIO_ACTUAL`.
-- **Uso local sin login** (decisión del usuario, 2026-10-26: trabaja solo en local): con `AUTO_PRIZMA_SIN_LOGIN=<usuario>` (`config.local_login_user()`, se lee en cada petición) el middleware y `GET /login` aceptan como ese usuario las peticiones **desde loopback** (`services.auth.local_login_user_for`, `is_loopback_request`), si el usuario existe y está activo. Desde otra IP se sigue pidiendo login aunque la variable esté definida: nunca definirla en Railway ni en servidores. Sin la variable, todo igual. `main.py` imprime «LOGIN DESACTIVADO…» al arrancar. Cubierto por `tests/test_local_login_bypass.py`. Las credenciales de PRIZMA de cada cargue NO cambian (son de la plataforma).
+- **Uso local sin login** (decisión del usuario, 2026-10-26: trabaja solo en local): con `AUTO_PRIZMA_SIN_LOGIN=<usuario>` (`config.local_login_user()`, se lee en cada petición) el middleware y `GET /login` aceptan como ese usuario las peticiones **desde loopback** (`services.auth.local_login_user_for`, `is_loopback_request`), si el usuario existe y está activo. Desde otra IP se sigue pidiendo login aunque la variable esté definida: nunca definirla en Railway ni en servidores. Sin la variable, todo igual. `main.py` imprime «LOGIN DESACTIVADO…» al arrancar. Cubierto por `tests/test_local_login_bypass.py`. Atajo (2026-10-27, a pedido del usuario): `scripts/run_local.ps1` define la variable (usuario por defecto `12345678`, el del usuario; otro con `-Usuario`) y `PYTHONIOENCODING=utf-8`, y arranca uvicorn con `--reload` en 127.0.0.1. Las credenciales de PRIZMA de cada cargue NO cambian (son de la plataforma).
 - `/moodle` y sus endpoints de preview/publicación/reportes requieren sesión y comprueban que el cliente sea loopback. Se habilita localmente porque Chromium aparece en el mismo escritorio para login manual; no se publica en Railway ni en host remoto.
 - Rutas principales: ver tabla en `README.md` (sección "Rutas principales"). `/docs` existe pero exige sesión. `/app.css` y `/app.js` son públicas (están en `RUTAS_PUBLICAS`, las usa el login). `/estado-servicio` y `/google/validar-matriz` devuelven JSON (401 sin sesión si se pide JSON).
 - Endpoints que usan Playwright sync deben ser `def` (threadpool) o hilos propios, **nunca `async def`**.

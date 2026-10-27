@@ -114,6 +114,12 @@ $env:AUTO_PRIZMA_SIN_LOGIN = "tu-usuario"
 uvicorn main:app --port 8000
 ```
 
+O con el script, que hace lo mismo (usuario por defecto `12345678`; otro con `-Usuario`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\run_local.ps1 -Usuario tu-usuario
+```
+
 Dentro de la app:
 
 - **Inicio** — sube la matriz y el ZIP y arranca el cargue.
