@@ -6,6 +6,10 @@ nombres truncados, copias "(1)", similitud, titulos internos H5P) vive en
 auto_prizma/auditor/procesar.py, copiada TAL CUAL del proyecto original.
 Aqui solo se suben la matriz (CSV) y los recursos (ZIP) y se pinta el
 dictamen. Solo audita: no modifica archivos ni carga nada a PRIZMA.
+
+La vista usa el mismo diseno que el resto de la app: encabezado con
+icono-tile, dropzones de Inicio, mosaicos de resumen y colores por
+variables (tema claro/oscuro automatico).
 """
 
 import glob
@@ -24,6 +28,7 @@ from auto_prizma.core.application import app
 from auto_prizma.core.config import AUDITORIA_DIR, TEMP_DIR
 from auto_prizma.web.icons import icon
 from auto_prizma.web.layout import render_page
+from auto_prizma.web.views import _archivo_listo
 
 
 def _e(valor):
@@ -41,16 +46,18 @@ def _ubicacion(item):
     return " · ".join(_e(p) for p in partes)
 
 
+_BADGES = {
+    "ok": ("aud-badge--ok", "OK"),
+    "alerta": ("aud-badge--alerta", "Alerta"),
+    "faltante": ("aud-badge--faltante", "Faltante"),
+    "fuera-de-alcance": ("aud-badge--na", "Fuera de alcance"),
+}
+
+
 def _fila_recurso(item):
     """Fila de un recurso auditado (badge de estado + detalle)."""
     estado = str(item.get("estado") or "")
-    etiquetas = {
-        "ok": ("badge-ok", "OK"),
-        "alerta": ("badge-alerta", "Alerta"),
-        "faltante": ("badge-faltante", "Faltante"),
-        "fuera-de-alcance": ("badge-na", "Fuera de alcance"),
-    }
-    clase, texto = etiquetas.get(estado, ("badge-na", estado))
+    clase, texto = _BADGES.get(estado, ("aud-badge--na", estado))
     sugerido = item.get("sugerencia") or {}
     extra = ""
     if sugerido.get("archivo"):
@@ -80,6 +87,21 @@ def _fila_recurso(item):
     )
 
 
+def _cabecera(acciones=""):
+    """Encabezado estandar de la app: icono-tile grande + titulo + acciones."""
+    return (
+        '<header class="encabezado"><div class="encabezado-titulo">'
+        '<span class="icono-tile grande morado">' + icon("escudo") + "</span>"
+        "<div><h1>Auditor de recursos</h1>"
+        "<p>Cruza la <strong>matriz de recursos</strong> del curso (CSV) con el "
+        "<strong>ZIP de archivos</strong>: nombres, títulos internos H5P, copias "
+        "y faltantes. <strong>Solo audita</strong>: no modifica archivos ni carga "
+        "nada a PRIZMA.</p></div></div>"
+        + (f'<div class="encabezado-acciones">{acciones}</div>' if acciones else "")
+        + "</header>"
+    )
+
+
 # ============================================================
 # PAGINA
 # ============================================================
@@ -102,8 +124,29 @@ def _historial_auditorias():
             + icon("descargar") + "Auditoría " + fecha + "</a></li>"
         )
     return (
-        '<section class="panel"><h2>Auditorías anteriores</h2>'
+        '<section class="panel aud-panel"><h2>Auditorías anteriores</h2>'
         '<ul class="aud-historial">' + items + "</ul></section>"
+    )
+
+
+def _campo(id_input, titulo, pista, nombre_icono, requerido, aceptar):
+    return (
+        '<div class="aud-campo">'
+        '<div class="aud-campo-titulo"><span class="icono-tile chico">'
+        + icon(nombre_icono)
+        + "</span><div><h2>" + titulo + "</h2><p>" + pista + "</p></div></div>"
+        '<label class="dropzone zona-drop" for="' + id_input
+        + '" data-input="' + id_input + '">'
+        + icon("subir", "icono icono-drop")
+        + "<strong>Selecciona o arrastra tu archivo</strong>"
+        + "<small>" + aceptar.replace(".", "").replace(",", " · ") + "</small>"
+        + '<span class="boton">Seleccionar archivo</span>'
+        + '<input id="' + id_input + '" type="file" name="' + id_input
+        + '" accept="' + aceptar + '"'
+        + (" required" if requerido else "")
+        + "></label>"
+        + _archivo_listo(id_input, nombre_icono)
+        + "</div>"
     )
 
 
@@ -127,34 +170,41 @@ def _pagina_formulario(error="", advertencias=()):
             )
 
     contenido = (
-        '<section class="panel">'
-        "<h2>Auditor de recursos del curso</h2>"
-        "<p>Cruza la <strong>matriz de recursos</strong> del curso (CSV exportado "
-        "de Excel) con el <strong>ZIP de archivos</strong> y verifica, recurso por "
-        "recurso, que el nombre y —en los H5P— el título interno calcen con la "
-        "matriz. <strong>Solo audita</strong>: no modifica archivos ni carga nada "
-        "a PRIZMA.</p>"
-        '<form class="aud-form" method="post" action="/auditor" '
+        _cabecera()
+        + aviso
+        + '<form class="panel aud-formulario" method="post" action="/auditor" '
         'enctype="multipart/form-data">'
-        "<label>Matriz de recursos (CSV)"
-        '<input type="file" name="matriz" accept=".csv,.txt" required>'
-        "</label>"
-        "<label>ZIP con los archivos del curso"
-        '<input type="file" name="recursos" accept=".zip" required>'
-        "</label>"
-        "<label>Syllabus (opcional: .docx, .pdf o .txt)"
-        '<input type="file" name="syllabus">'
-        "</label>"
+        '<div class="aud-campos">'
+        + _campo(
+            "matriz",
+            "Matriz de recursos",
+            "Exporta la hoja de Excel como CSV UTF-8.",
+            "hoja", True, ".csv,.txt",
+        )
+        + _campo(
+            "recursos",
+            "ZIP de recursos",
+            "Un solo .zip con los archivos del curso.",
+            "zip", True, ".zip",
+        )
+        + _campo(
+            "syllabus",
+            "Syllabus (opcional)",
+            "Cruce opcional con la matriz.",
+            "documento", False, ".docx,.pdf,.txt",
+        )
+        + "</div>"
         '<button class="boton" type="submit">' + icon("escudo")
         + "Auditar</button>"
-        "</form></section>"
+        "</form>"
         + _historial_auditorias()
     )
     return render_page(
         "Auditor de recursos",
-        aviso + contenido,
+        contenido,
         active="auditor",
         page_css=_CSS,
+        page_js=_JS,
     )
 
 
@@ -168,38 +218,50 @@ def _pagina_resultado(res, nombre_matriz):
         r for r in res["resultados"] if r["estado"] == "fuera-de-alcance"
     ]
 
+    acciones = (
+        '<a class="boton" href="/auditor/reporte/'
+        + _e(os.path.basename(res["reporte_md"])) + '">'
+        + icon("descargar") + "Descargar reporte (.md)</a>"
+        '<a class="boton secundario" href="/auditor">' + icon("girar")
+        + "Nueva auditoría</a>"
+    )
+
     if corregir:
         veredicto = (
-            '<div class="aviso error" role="alert">' + icon("alerta-circulo")
-            + "<div><strong>Hay "
-            + str(len(corregir))
-            + " recurso(s) por corregir</strong><p>Revisa las alertas y los "
-            "faltantes; el reporte completo se puede descargar abajo.</p></div></div>"
+            '<div class="mosaico estado error aud-veredicto" role="alert">'
+            '<span class="icono-tile">' + icon("alerta-circulo") + "</span>"
+            "<div><strong>" + str(len(corregir)) + "</strong>"
+            "<b>recurso(s) por corregir</b>"
+            "<small>Revisa las alertas y los faltantes; el reporte completo "
+            "se puede descargar arriba.</small></div></div>"
         )
     else:
         veredicto = (
-            '<div class="aviso ok" role="status">' + icon("check-circulo")
-            + "<div><strong>Todo calza</strong><p>Los "
-            + str(conteo["ok"])
-            + " recurso(s) auditables de la matriz tienen su archivo "
-            "(nombre y título interno OK).</p></div></div>"
+            '<div class="mosaico estado ok aud-veredicto" role="status">'
+            '<span class="icono-tile">' + icon("check-circulo") + "</span>"
+            "<div><strong>Todo calza</strong>"
+            "<b>" + str(conteo["ok"]) + " recurso(s) correctos</b>"
+            "<small>Los nombres y los títulos internos calzan con la "
+            "matriz.</small></div></div>"
         )
 
     fichas = (
-        '<div class="aud-resumen">'
-        + _ficha("OK", conteo["ok"], "ok")
-        + _ficha("Alerta", conteo["alerta"], "alerta")
-        + _ficha("Faltante", conteo["faltante"], "faltante")
-        + _ficha("Fuera de alcance", conteo["fuera-de-alcance"], "na")
-        + _ficha("Huérfanos (sin fila)", len(res["huerfanos"]), "na")
-        + _ficha("Archivos en el ZIP", res["total_archivos"], "na")
-        + "</div>"
+        '<section class="mosaicos" aria-label="Resumen">'
+        + _ficha("check", "verde", conteo["ok"], "OK")
+        + _ficha("alerta", "ambar", conteo["alerta"], "Alertas")
+        + _ficha("alerta-circulo", "rojo", conteo["faltante"], "Faltantes")
+        + _ficha(
+            "play", "naranja", conteo["fuera-de-alcance"], "Fuera de alcance"
+        )
+        + _ficha("documento", "morado", len(res["huerfanos"]), "Huérfanos")
+        + _ficha("zip", "azul", res["total_archivos"], "Archivos en el ZIP")
+        + "</section>"
     )
 
     seccion_corregir = ""
     if corregir:
         seccion_corregir = (
-            '<section class="panel"><h2>Por corregir ('
+            '<section class="panel aud-panel"><h2>Por corregir ('
             + str(len(corregir))
             + ")</h2><ul class='aud-lista'>"
             + "".join(_fila_recurso(r) for r in corregir)
@@ -210,7 +272,7 @@ def _pagina_resultado(res, nombre_matriz):
         if not items:
             return ""
         return (
-            '<details class="panel aud-detalle-panel"><summary>'
+            '<details class="panel aud-panel"><summary>'
             + titulo + " (" + str(len(items)) + ")</summary><ul class='aud-lista'>"
             + "".join(_fila_recurso(r) for r in items)
             + "</ul></details>"
@@ -224,12 +286,12 @@ def _pagina_resultado(res, nombre_matriz):
     huerfanos = ""
     if res["huerfanos"]:
         huerfanos = (
-            '<details class="panel aud-detalle-panel"><summary>Huérfanos ('
+            '<details class="panel aud-panel"><summary>Huérfanos ('
             + str(len(res["huerfanos"]))
             + ") — archivos sin fila en la matriz</summary><ul class='aud-lista'>"
             + "".join(
-                "<li class='aud-recurso'><span class='aud-badge badge-na'>—"
-                "</span><div><code>" + _e(rel) + "</code></div></li>"
+                "<li class='aud-recurso'><span class='aud-badge aud-badge--na'>"
+                "—</span><div><code>" + _e(rel) + "</code></div></li>"
                 for rel in res["huerfanos"]
             )
             + "</ul></details>"
@@ -245,7 +307,7 @@ def _pagina_resultado(res, nombre_matriz):
             for f in res["archivos_detalle"]
         )
         revision = (
-            '<details class="panel aud-detalle-panel">'
+            '<details class="panel aud-panel">'
             "<summary>Revisión 1 a 1 — todos los archivos ("
             + str(len(res["archivos_detalle"]))
             + ")</summary><div class='tabla-scroll'><table class='tabla'>"
@@ -257,7 +319,7 @@ def _pagina_resultado(res, nombre_matriz):
     advertencias = ""
     if res["advertencias"]:
         advertencias = (
-            '<details class="panel aud-detalle-panel"><summary>Advertencias ('
+            '<details class="panel aud-panel"><summary>Advertencias ('
             + str(len(res["advertencias"])) + ")</summary><ul>"
             + "".join("<li>" + _e(a) + "</li>" for a in res["advertencias"])
             + "</ul></details>"
@@ -284,17 +346,12 @@ def _pagina_resultado(res, nombre_matriz):
             + "</strong><p>" + html.escape(cuerpo) + "</p></div></div>"
         )
 
-    nombre_reporte = os.path.basename(res["reporte_md"])
     contenido = (
-        '<section class="panel aud-cabecera">'
-        "<h2>Auditoría de <code>" + _e(nombre_matriz) + "</code></h2>"
-        "<p>" + icon("zip") + " " + str(res["total_archivos"])
-        + " archivo(s) en el ZIP · " + str(res["total_auditables"])
-        + " recurso(s) auditables en la matriz</p>"
-        '<a class="boton" href="/auditor/reporte/' + _e(nombre_reporte) + '">'
-        + icon("descargar") + "Descargar reporte (.md)</a>"
-        '<a class="boton" href="/auditor">Nueva auditoría</a>'
-        "</section>"
+        _cabecera(acciones=acciones)
+        + '<p class="aud-linea">' + icon("zip") + " "
+        + str(res["total_archivos"]) + " archivo(s) en el ZIP · "
+        + str(res["total_auditables"]) + " recurso(s) auditables en <code>"
+        + _e(nombre_matriz) + "</code></p>"
         + veredicto + fichas + syllabus + seccion_corregir
         + secciones_extra + huerfanos + revision + advertencias
     )
@@ -303,48 +360,146 @@ def _pagina_resultado(res, nombre_matriz):
         contenido,
         active="auditor",
         page_css=_CSS,
+        page_js=_JS,
     )
 
 
-def _ficha(texto, valor, clase):
+def _ficha(nombre_icono, color, valor, texto):
     return (
-        '<span class="aud-ficha aud-ficha--' + clase + '">'
-        + "<strong>" + str(valor) + "</strong>" + _e(texto) + "</span>"
+        '<div class="mosaico"><span class="icono-tile ' + color + '">'
+        + icon(nombre_icono)
+        + '</span><div><strong class="num">' + str(valor) + "</strong><span>"
+        + _e(texto) + "</span></div></div>"
     )
 
 
 _CSS = r"""
-.aud-form { display: grid; gap: 14px; max-width: 520px; margin-top: 8px; }
-.aud-form label { display: grid; gap: 6px; font-weight: 700; font-size: 14px; }
-.aud-resumen { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
-.aud-ficha { border: 1px solid var(--borde, #d8d8d8); border-radius: 10px;
-  padding: 8px 14px; display: flex; gap: 6px; align-items: baseline;
-  font-size: 13px; }
-.aud-ficha strong { font-size: 16px; }
-.aud-ficha--ok strong { color: #15803d; }
-.aud-ficha--alerta strong { color: #b45309; }
-.aud-ficha--faltante strong { color: #b91c1c; }
-.aud-lista { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.aud-recurso { display: flex; gap: 10px; align-items: flex-start;
-  border-bottom: 1px solid var(--borde-suave, #eee); padding-bottom: 8px; }
+/* Encabezado y tarjeta del formulario */
+.aud-formulario { padding: 26px; display: grid; gap: 22px; }
+.aud-campos { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+.aud-campo { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.aud-campo-titulo { display: flex; gap: 12px; align-items: center; }
+.aud-campo-titulo h2 { margin: 0; font-size: 16px; font-weight: 800; }
+.aud-campo-titulo p { margin: 3px 0 0; font-size: 13px; color: var(--muted); }
+.aud-formulario > .boton { justify-self: start; }
+
+/* Dropzones y archivo listo (mismo diseno de Inicio) */
+.dropzone {
+  display: grid; justify-items: center; gap: 6px; text-align: center;
+  padding: 24px 18px; border: 2px dashed var(--acento-borde); border-radius: 14px;
+  background: var(--panel-2); cursor: pointer;
+  transition: border-color .15s ease, background .15s ease;
+}
+.dropzone:hover, .dropzone.arrastrando { border-color: var(--acento); background: var(--acento-suave); }
+.dropzone input { display: none; }
+.dropzone .icono-drop { width: 34px; height: 34px; color: var(--acento-texto); }
+.dropzone strong { font-size: 15px; color: var(--texto); }
+.dropzone small { font-size: 13px; color: var(--muted); }
+.dropzone .boton { margin-top: 10px; padding: 10px 26px; }
+
+.archivo-listo {
+  display: flex; align-items: center; gap: 14px; min-width: 0;
+  padding: 12px 14px; border: 1px solid var(--borde); border-radius: 14px;
+  background: var(--panel);
+}
+.archivo-listo-texto { flex: 1; min-width: 0; }
+.archivo-listo-texto strong {
+  display: block; font-size: 15px; color: var(--texto);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.archivo-listo-texto small { display: block; margin-top: 2px; font-size: 13.5px; color: var(--muted); }
+.icono-listo { width: 28px; height: 28px; }
+.icono-listo circle { fill: var(--verde); stroke: var(--verde); }
+.icono-listo path { stroke: #ffffff; stroke-width: 2.4; }
+.archivo-listo .boton-icono { border-left: 1px solid var(--borde); border-radius: 0 10px 10px 0; }
+
+/* Resultado */
+.aud-linea { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 14px; margin: 0 0 18px; }
+.aud-veredicto { margin: 0 0 18px; }
+.aud-panel { padding: 22px 26px; }
+.aud-panel > h2 { margin: 0 0 6px; font-size: 19px; font-weight: 800; }
+.aud-panel summary { cursor: pointer; font-weight: 700; font-size: 15px; }
+
+/* Filas de recursos */
+.aud-lista { list-style: none; margin: 0; padding: 0; }
+.aud-recurso { display: flex; gap: 12px; align-items: flex-start; padding: 12px 0; border-top: 1px solid var(--borde); }
+.aud-recurso:first-child { border-top: 0; padding-top: 4px; }
 .aud-recurso > div { min-width: 0; }
-.aud-ubicacion { margin-left: 8px; font-size: 12px; opacity: .7; }
-.aud-archivo { margin: 2px 0; font-size: 13px; }
-.aud-detalle { margin: 2px 0 0; font-size: 13px; opacity: .85; }
-.aud-sugerencia { margin: 2px 0 0; font-size: 13px; }
-.aud-badge { flex: none; font-size: 11px; font-weight: 800; border-radius: 8px;
-  padding: 3px 8px; text-transform: uppercase; letter-spacing: .3px; }
-.badge-ok { background: #dcfce7; color: #15803d; }
-.badge-alerta { background: #fef3c7; color: #b45309; }
-.badge-faltante { background: #fee2e2; color: #b91c1c; }
-.badge-na { background: #f1f5f9; color: #64748b; }
-.aud-detalle-panel summary { cursor: pointer; font-weight: 700; }
-.aud-historial { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
-.aud-cabecera .boton { margin-right: 8px; }
-[data-theme="dark"] .badge-ok { background: #14532d; color: #bbf7d0; }
-[data-theme="dark"] .badge-alerta { background: #78350f; color: #fde68a; }
-[data-theme="dark"] .badge-faltante { background: #7f1d1d; color: #fecaca; }
-[data-theme="dark"] .badge-na { background: #1e293b; color: #94a3b8; }
+.aud-ubicacion { margin-left: 8px; font-size: 12px; color: var(--muted); }
+.aud-archivo { margin: 3px 0; font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
+.aud-detalle { margin: 3px 0 0; font-size: 13px; color: var(--texto-2); }
+.aud-sugerencia { margin: 3px 0 0; font-size: 13px; color: var(--ambar); }
+.aud-badge {
+  flex: none; display: inline-block; border-radius: 999px; padding: 5px 10px;
+  font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .3px;
+}
+.aud-badge--ok { background: var(--verde-suave); color: var(--verde); }
+.aud-badge--alerta { background: var(--ambar-suave); color: var(--ambar); }
+.aud-badge--faltante { background: var(--rojo-suave); color: var(--rojo); }
+.aud-badge--na { background: var(--panel-2); color: var(--muted); }
+
+/* Historial */
+.aud-historial { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 8px; }
+.aud-historial a { display: flex; gap: 8px; align-items: center; color: var(--acento-texto); font-weight: 600; font-size: 14px; }
+"""
+
+_JS = r"""
+  function tamanoLegible(bytes) {
+    if (bytes >= 1024 * 1024) {
+      return (bytes / 1024 / 1024).toLocaleString('es-CO', { maximumFractionDigits: 1 }) + ' MB';
+    }
+    return Math.max(1, Math.round(bytes / 1024)).toLocaleString('es-CO') + ' KB';
+  }
+
+  function mostrarArchivo(input) {
+    var fila = document.getElementById('listo-' + input.id);
+    if (!fila) return;
+    var archivo = input.files && input.files[0];
+    if (!archivo) { fila.hidden = true; return; }
+    var nombre = fila.querySelector('[data-nombre]');
+    nombre.textContent = archivo.name;
+    nombre.title = archivo.name;
+    fila.querySelector('[data-detalle]').textContent = tamanoLegible(archivo.size) + ' · Listo para auditar';
+    fila.hidden = false;
+  }
+
+  document.querySelectorAll('.zona-drop').forEach(function (zona) {
+    var input = document.getElementById(zona.dataset.input);
+    if (!input) return;
+    input.addEventListener('change', function () { mostrarArchivo(input); });
+
+    ['dragenter', 'dragover'].forEach(function (tipo) {
+      zona.addEventListener(tipo, function (evento) {
+        evento.preventDefault();
+        evento.stopPropagation();
+        zona.classList.add('arrastrando');
+      });
+    });
+    ['dragleave', 'drop'].forEach(function (tipo) {
+      zona.addEventListener(tipo, function (evento) {
+        evento.preventDefault();
+        evento.stopPropagation();
+        zona.classList.remove('arrastrando');
+      });
+    });
+    zona.addEventListener('drop', function (evento) {
+      var archivos = evento.dataTransfer.files;
+      if (!archivos || !archivos.length || input.disabled) return;
+      var transferencia = new DataTransfer();
+      transferencia.items.add(archivos[0]);
+      input.files = transferencia.files;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
+
+  document.querySelectorAll('[data-quitar]').forEach(function (boton) {
+    boton.addEventListener('click', function () {
+      var input = document.getElementById(boton.getAttribute('data-quitar'));
+      if (!input) return;
+      input.value = '';
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  });
 """
 
 

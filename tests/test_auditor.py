@@ -299,7 +299,7 @@ def test_auditoria_web_completa_muestra_dictamen(tmp_path):
 
     assert respuesta.status_code == 200
     assert "Todo calza" in respuesta.text
-    assert "aud-resumen" in respuesta.text
+    assert "mosaicos" in respuesta.text
     assert "/auditor/reporte/auditoria_" in respuesta.text
 
 
