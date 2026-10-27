@@ -4963,6 +4963,7 @@ def procesar_actividad(
     captura,
     actividades_curso,
     estado_navegacion=None,
+    recurso_manual=None,
 ):
 
     print()
@@ -4992,42 +4993,61 @@ def procesar_actividad(
     print("======================================")
 
     # 1. VALIDAR CARPETA DE RECURSO EN GOOGLE DRIVE (SI EXISTE)
-
-    error_carpeta = validar_carpeta_drive_para_actividad(
-        actividad
-    )
-
-    if error_carpeta:
-        return {
-            "ok": False,
-            "error": error_carpeta,
-            "recurso": "",
-        }
-
     # 2. RECURSO DEL ZIP
+    #
+    # En el reintento individual el archivo lo entrega el usuario
+    # (recurso_manual): se usa tal cual, sin buscar en Drive ni en el ZIP.
 
-    recurso, error = resolver_recurso(
-        actividad,
-        indice_recursos,
-        carpeta_temp,
-        actividades_curso,
-    )
+    if recurso_manual:
 
-    if error:
+        ruta_recurso = str(recurso_manual)
+        nombre_recurso = os.path.basename(ruta_recurso)
 
-        return {
-            "ok": False,
-            "error": error,
-            "recurso": "",
-        }
+        if not os.path.isfile(ruta_recurso):
 
-    ruta_recurso = recurso[
-        "ruta"
-    ]
+            return {
+                "ok": False,
+                "error":
+                    "ERROR_ARCHIVO_RECURSO_NO_VALIDO",
+                "recurso":
+                    nombre_recurso,
+            }
 
-    nombre_recurso = recurso[
-        "nombre_original"
-    ]
+    else:
+
+        error_carpeta = validar_carpeta_drive_para_actividad(
+            actividad
+        )
+
+        if error_carpeta:
+            return {
+                "ok": False,
+                "error": error_carpeta,
+                "recurso": "",
+            }
+
+        recurso, error = resolver_recurso(
+            actividad,
+            indice_recursos,
+            carpeta_temp,
+            actividades_curso,
+        )
+
+        if error:
+
+            return {
+                "ok": False,
+                "error": error,
+                "recurso": "",
+            }
+
+        ruta_recurso = recurso[
+            "ruta"
+        ]
+
+        nombre_recurso = recurso[
+            "nombre_original"
+        ]
 
     # Modo HTML: el codigo del archivo va al campo "Html" (no al campo "Recurso").
     es_html = str(actividad.get("tipo_archivo") or "").upper() == "HTML"
@@ -5847,6 +5867,381 @@ def _abrir_sesion_inicial(
                 dormir(1)
 
     return None
+
+
+# ============================================================
+# REINTENTO INDIVIDUAL: UNA ACTIVIDAD, UN RECURSO ELEGIDO A MANO
+# ============================================================
+
+def subir_actividad_manual(
+    usuario_prizma,
+    contrasena_prizma,
+    actividad,
+    ruta_archivo,
+    carpeta_temp,
+    estado,
+):
+    """Sube UN recurso (archivo entregado por el usuario) a UNA actividad.
+
+    Mismo camino que el cargue completo pero para una sola actividad: login,
+    listado, categoria, edicion y guardado, con un reintento en sesion limpia
+    si el fallo es estructural. El archivo se usa tal cual (recurso_manual),
+    sin buscar en Drive ni en el ZIP.
+
+    Returns:
+        dict con {"ok", "error", "recurso"} como procesar_actividad.
+    """
+    nombre_actividad = str(actividad.get("nombre") or "")
+    respuestas = []
+    captura = {"activa": False}
+    estado_navegacion = {"categoria_actual": None}
+    resultado = None
+
+    actualizar_estado(
+        estado,
+        etapa="login",
+        mensaje="Iniciando sesión en PRIZMA...",
+        total=1,
+        procesadas=0,
+        exitosas=0,
+        errores=0,
+        terminado=False,
+    )
+
+    with sync_playwright() as p:
+        navegador = None
+
+        def registrar_respuesta(response):
+            _registrar_respuesta_prizma(
+                response,
+                respuestas,
+                captura,
+            )
+
+        def registrar_fallo(request):
+            _registrar_fallo_prizma(
+                request,
+                captura,
+            )
+
+        def abrir_sesion(motivo=""):
+            nonlocal navegador
+            estado_navegacion["categoria_actual"] = None
+            if motivo:
+                print("⚠️ Reiniciando sesión PRIZMA:", motivo)
+            if navegador is not None:
+                try:
+                    navegador.close()
+                except Exception:
+                    pass
+            navegador = p.chromium.launch(
+                headless=True,
+                args=list(CHROMIUM_ARGS),
+            )
+            pagina = navegador.new_page(
+                viewport=dict(VIEWPORT_NAVEGADOR)
+            )
+            pagina.on("response", registrar_respuesta)
+            pagina.on("requestfailed", registrar_fallo)
+            iniciar_sesion_prizma(
+                pagina,
+                usuario_prizma,
+                contrasena_prizma,
+            )
+            return pagina
+
+        try:
+            pagina = _abrir_sesion_inicial(abrir_sesion, estado)
+        except Exception as error:
+            texto = str(error).strip()
+            if navegador is not None:
+                try:
+                    navegador.close()
+                except Exception:
+                    pass
+            if "ERROR_LOGIN_PRIZMA" in texto:
+                marca = "ERROR_LOGIN_PRIZMA"
+            else:
+                marca = "ERROR_CONECTANDO_PRIZMA"
+            return {
+                "ok": False,
+                "error": marca + ": " + (texto.splitlines() or [""])[0][:200],
+                "recurso": "",
+            }
+
+        if pagina is None:
+            # Cancelado durante la espera de la sesion.
+            return {
+                "ok": False,
+                "error": "ERROR_CANCELADO",
+                "recurso": "",
+            }
+
+        actualizar_estado(
+            estado,
+            etapa="procesando",
+            mensaje="Subiendo el recurso a: " + nombre_actividad,
+            procesadas=0,
+        )
+
+        try:
+            # Preflight: si no estamos en el listado, sesion limpia.
+            try:
+                listado_ok = asegurar_listado(pagina)
+            except Exception:
+                listado_ok = False
+            if not listado_ok:
+                pagina = abrir_sesion(
+                    "no fue posible confirmar el listado antes de la actividad"
+                )
+
+            for intento in (1, 2):
+                if _cancelacion_solicitada(estado):
+                    return {
+                        "ok": False,
+                        "error": "ERROR_CANCELADO",
+                        "recurso": "",
+                    }
+
+                try:
+                    resultado = procesar_actividad(
+                        pagina,
+                        actividad,
+                        [],
+                        carpeta_temp,
+                        respuestas,
+                        captura,
+                        [actividad],
+                        estado_navegacion,
+                        recurso_manual=ruta_archivo,
+                    )
+                except Exception as error:
+                    traceback.print_exc()
+                    resultado = {
+                        "ok": False,
+                        "error": (
+                            "ERROR_PROCESANDO_ACTIVIDAD: "
+                            + str(error).strip()[:200]
+                        ),
+                        "recurso": "",
+                    }
+
+                if resultado.get("ok"):
+                    break
+
+                error_actual = str(resultado.get("error") or "")
+                es_ultimo = intento == 2
+                if es_ultimo or not _es_error_estructural_prizma(error_actual):
+                    break
+
+                # Mismo criterio del cargue: un fallo estructural se
+                # reintenta una sola vez con navegador limpio.
+                try:
+                    pagina = abrir_sesion(
+                        "reintento tras " + error_actual
+                    )
+                except Exception:
+                    traceback.print_exc()
+                    break
+        finally:
+            try:
+                if navegador is not None:
+                    navegador.close()
+            except Exception:
+                pass
+
+    return resultado
+
+
+# ============================================================
+# VERIFICACION (SOLO LECTURA): ¿LA ACTIVIDAD APARECE EN PRIZMA?
+# ============================================================
+
+def verificar_actividades_prizma(
+    usuario_prizma,
+    contrasena_prizma,
+    actividades,
+    estado,
+):
+    """Comprueba, sin tocar formularios, que cada actividad aparezca en PRIZMA.
+
+    ``actividades`` es [(clave, actividad), ...]. Por cada una entra a su
+    categoria, busca la fila y anota:
+
+    - "existe": aparece en el listado (si sale mas de una vez se anota),
+    - "no_esta": el curso no tiene esa actividad,
+    - "no_se_pudo": fallo la consulta (sesion, categoria, error de tabla).
+
+    Returns:
+        {"ok", "error", "resultados": [{"clave", "nombre", "verificacion",
+        "detalle"}]}
+    """
+    total = len(actividades)
+    resultados = []
+
+    actualizar_estado(
+        estado,
+        etapa="login",
+        mensaje="Iniciando sesión en PRIZMA para verificar el curso...",
+        total=total,
+        procesadas=0,
+        exitosas=0,
+        errores=0,
+        terminado=False,
+    )
+
+    with sync_playwright() as p:
+        navegador = None
+        estado_navegacion = {"categoria_actual": None}
+
+        def abrir_sesion(motivo=""):
+            nonlocal navegador
+            estado_navegacion["categoria_actual"] = None
+            if motivo:
+                print("⚠️ Reiniciando sesión PRIZMA:", motivo)
+            if navegador is not None:
+                try:
+                    navegador.close()
+                except Exception:
+                    pass
+            navegador = p.chromium.launch(
+                headless=True,
+                args=list(CHROMIUM_ARGS),
+            )
+            pagina = navegador.new_page(
+                viewport=dict(VIEWPORT_NAVEGADOR)
+            )
+            iniciar_sesion_prizma(
+                pagina,
+                usuario_prizma,
+                contrasena_prizma,
+            )
+            return pagina
+
+        try:
+            pagina = _abrir_sesion_inicial(abrir_sesion, estado)
+        except Exception as error:
+            texto = str(error).strip()
+            if navegador is not None:
+                try:
+                    navegador.close()
+                except Exception:
+                    pass
+            if "ERROR_LOGIN_PRIZMA" in texto:
+                marca = "ERROR_LOGIN_PRIZMA"
+            else:
+                marca = "ERROR_CONECTANDO_PRIZMA"
+            return {
+                "ok": False,
+                "error": marca + ": " + (texto.splitlines() or [""])[0][:200],
+                "resultados": resultados,
+            }
+
+        if pagina is None:
+            return {
+                "ok": False,
+                "error": "ERROR_CANCELADO",
+                "resultados": resultados,
+            }
+
+        try:
+            for numero, (clave, actividad) in enumerate(actividades, start=1):
+                if _cancelacion_solicitada(estado):
+                    return {
+                        "ok": False,
+                        "error": "ERROR_CANCELADO",
+                        "resultados": resultados,
+                    }
+
+                nombre = str(actividad.get("nombre") or "")
+                actualizar_estado(
+                    estado,
+                    etapa="verificando",
+                    mensaje=(
+                        "Verificando " + str(numero) + " de " + str(total)
+                        + ": " + nombre
+                    ),
+                    procesadas=numero - 1,
+                )
+
+                entrada = {
+                    "clave": clave,
+                    "nombre": nombre,
+                    "verificacion": "no_se_pudo",
+                    "detalle": "",
+                }
+
+                try:
+                    try:
+                        listado_ok = asegurar_listado(pagina)
+                    except Exception:
+                        listado_ok = False
+                    if not listado_ok:
+                        pagina = abrir_sesion(
+                            "listado no disponible durante la verificacion"
+                        )
+
+                    if not entrar_categoria(
+                        pagina,
+                        actividad["categoria_prizma"],
+                        estado_navegacion,
+                    ):
+                        entrada["detalle"] = (
+                            "No se pudo abrir la categoría "
+                            + str(actividad["categoria_prizma"]) + "."
+                        )
+                    else:
+                        fila, error = buscar_actividad_correcta(
+                            pagina,
+                            actividad,
+                        )
+                        if error:
+                            codigo = str(error)
+                            if (
+                                "ERROR_ACTIVIDAD_NO_ENCONTRADA" in codigo
+                                or "ERROR_CURSO_SIN_PLANTILLA" in codigo
+                            ):
+                                entrada["verificacion"] = "no_esta"
+                            elif "ERROR_ACTIVIDAD_DUPLICADA" in codigo:
+                                # Varias filas con el nombre: si esta, mas de
+                                # una vez; se conserva el detalle del motivo.
+                                entrada["verificacion"] = "existe"
+                            entrada["detalle"] = mensaje_error(codigo)
+                        else:
+                            entrada["verificacion"] = "existe"
+                            entrada["detalle"] = "Aparece en PRIZMA."
+                except Exception:
+                    traceback.print_exc()
+                    entrada["verificacion"] = "no_se_pudo"
+                    entrada["detalle"] = (
+                        "No se pudo consultar la actividad (error inesperado)."
+                    )
+
+                resultados.append(entrada)
+
+                exitosas = sum(
+                    1 for r in resultados
+                    if r["verificacion"] == "existe"
+                )
+                errores = len(resultados) - exitosas
+                actualizar_estado(
+                    estado,
+                    procesadas=numero,
+                    exitosas=exitosas,
+                    errores=errores,
+                )
+        finally:
+            try:
+                if navegador is not None:
+                    navegador.close()
+            except Exception:
+                pass
+
+    return {
+        "ok": True,
+        "error": "",
+        "resultados": resultados,
+    }
 
 
 def ejecutar_cargue(

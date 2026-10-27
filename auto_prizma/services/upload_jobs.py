@@ -647,6 +647,42 @@ def active_jobs():
     return activos
 
 
+def crear_trabajo_manual(tipo, titulo, usuario_app, ruta_reporte="", cursos=None):
+    """Trabajo corto (reintento individual o verificacion) en TRABAJOS.
+
+    Entra con etapa "preparando" y sin cola: lo ejecuta su propio hilo. Como
+    trae todas las claves que leen /estado, /reporte y la tarjeta de
+    "Cargue actual", usa la misma pagina de progreso, el mismo cancelado y el
+    mismo reporte que un cargue normal.
+    """
+    trabajo_id = uuid.uuid4().hex
+    ahora = _ahora_colombia_iso()
+
+    with TRABAJOS_LOCK:
+        TRABAJOS[trabajo_id] = {
+            "id": trabajo_id,
+            "trabajo_id": trabajo_id,
+            "tipo": tipo,
+            "titulo": str(titulo or ""),
+            "usuario_app": str(usuario_app or ""),
+            "cursos": list(cursos or []),
+            "creado_en": ahora,
+            "iniciado_en": ahora,
+            "etapa": "preparando",
+            "mensaje": str(titulo or "Preparando..."),
+            "total": 0,
+            "procesadas": 0,
+            "exitosas": 0,
+            "errores": 0,
+            "terminado": False,
+            "ruta_reporte": ruta_reporte or "",
+            "detalle_actividades": [],
+            "cancelar_solicitado": False,
+        }
+
+    return trabajo_id
+
+
 def cancel_job(trabajo_id, usuario):
     """Pide cancelar un trabajo del usuario.
 

@@ -15,6 +15,10 @@ MENSAJES_ERROR = {
     "ERROR_LOGIN_PRIZMA": (
         "PRIZMA no aceptó el usuario o la contraseña. Revisa las credenciales."
     ),
+    "ERROR_CONECTANDO_PRIZMA": (
+        "No fue posible conectar con PRIZMA para iniciar sesión. Revisa la "
+        "conexión o que PRIZMA esté disponible."
+    ),
     "ERROR_GOOGLE_NO_CONECTADO": (
         "Google no está conectado. Conecta Google para usar recursos de Drive."
     ),
@@ -168,6 +172,20 @@ MENSAJES_ERROR = {
     # --- Genéricos ---
     "ERROR_DESCONOCIDO": (
         "Falló por una razón no identificada. Revisa el reporte o el log."
+    ),
+    "ERROR_CANCELADO": (
+        "El proceso fue cancelado por el usuario."
+    ),
+    "ERROR_ARCHIVO_RECURSO_NO_VALIDO": (
+        "El archivo elegido como recurso no se pudo leer desde el disco; "
+        "vuelve a elegirlo."
+    ),
+    "ERROR_PROCESANDO_ACTIVIDAD": (
+        "Ocurrió un error inesperado al procesar la actividad en PRIZMA."
+    ),
+    "ERROR_NO_ESTA_EN_PRIZMA": (
+        "La verificación en PRIZMA no encontró la actividad: no está en el "
+        "curso."
     ),
 }
 
