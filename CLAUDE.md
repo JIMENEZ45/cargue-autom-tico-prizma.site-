@@ -51,7 +51,7 @@ auto-prizma-pro/
 │   │   └── clock.py                # _ahora_colombia / _ahora_colombia_iso
 │   ├── api/routes/
 │   │   ├── static_files.py         # Logo, /app.css y /app.js (públicos)
-│   │   ├── auth.py                 # Middleware de sesión, login, salir, cambiar clave
+│   │   ├── auth.py                 # Middleware de sesión y login
 │   │   ├── google.py               # /google/conectar, /google/callback, /google/desconectar
 │   │   ├── analysis.py             # / y POST /analizar (matriz + ZIP + opcional test .docx)
 │   │   ├── uploads.py              # /iniciar, /cargue-actual, /proceso, /estado, /cancelar

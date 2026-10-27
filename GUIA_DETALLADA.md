@@ -92,7 +92,7 @@ auto_prizma/                  Código de la aplicación
     clock.py                  Hora de Colombia para historial, reportes y estados
   api/routes/                 Rutas web (cada módulo registra sus rutas sobre la app)
     static_files.py           Logo y recursos comunes de la interfaz (/app.css y /app.js)
-    auth.py                   Middleware de sesión, login, salir y cambio de contraseña
+    auth.py                   Middleware de sesión y login
     google.py                 Conectar / desconectar Google
     analysis.py               Inicio y análisis previo al cargue
     uploads.py                Iniciar, seguir, cancelar y estado de cargues
@@ -154,8 +154,6 @@ Dockerfile                  Imagen para despliegue
 | Ruta | Descripción |
 |---|---|
 | `GET /login`, `POST /login` | Inicio de sesión |
-| `GET /salir` | Cerrar sesión |
-| `GET/POST /cambiar-clave` | Cambio de contraseña del usuario |
 | `GET /` | Inicio: formulario de matriz, recursos y categorías |
 | `POST /analizar` | Análisis previo de la matriz y los recursos |
 | `POST /iniciar/{trabajo_id}` | Inicia (encola) el cargue con las actividades seleccionadas |
@@ -310,7 +308,7 @@ Los usuarios se gestionan desde la consola con `scripts/manage_users.py`. Todas 
 .\.venv\Scripts\python.exe scripts\manage_users.py borrar       # Elimina usuario y token Google (pide confirmación)
 ```
 
-La contraseña debe tener al menos 8 caracteres. Cada usuario también puede cambiar la suya desde **Mi contraseña** dentro de la app.
+La contraseña debe tener al menos 8 caracteres. Para cambiarla de un usuario, ejecuta `python scripts/manage_users.py clave`.
 
 > En Railway estos comandos se ejecutan desde la consola del servicio, para que actúen sobre el volumen de datos de producción.
 
@@ -345,7 +343,7 @@ Las filas sin nombre o sin categoría se omiten.
 5. **Iniciar:** seleccionar las actividades, ingresar usuario y contraseña de PRIZMA e iniciar. Si ya hay 2 cargues en curso, el nuevo espera en cola.
 6. **Seguimiento:** ver el avance en *Cargue actual*; se puede cancelar en cualquier momento.
 
-Arriba a la derecha están el botón de tema claro/oscuro y el menú del usuario (*Mi contraseña*, *Desconectar Google*, *Salir*). Los indicadores de Inicio y la tarjeta del menú lateral muestran el estado real: *Chromium activo* si el navegador de Playwright está instalado y *Servicio estable* si PRIZMA responde (se comprueba cada pocos minutos). *Ver guía* abre los pasos y consejos. En *Reportes* se puede buscar, filtrar por programa, curso y fecha, ordenar columnas y copiar el enlace de un reporte; en el detalle, buscar en la tabla y copiar la observación de una fila.
+Arriba a la derecha están el botón de tema claro/oscuro y el menú del usuario (nombre y *Desconectar Google* cuando está conectado). Los indicadores de Inicio y la tarjeta del menú lateral muestran el estado real: *Chromium activo* si el navegador de Playwright está instalado y *Servicio estable* si PRIZMA responde (se comprueba cada pocos minutos). *Ver guía* abre los pasos y consejos. En *Reportes* se puede buscar, filtrar por programa, curso y fecha, ordenar columnas y copiar el enlace de un reporte; en el detalle, buscar en la tabla y copiar la observación de una fila.
 
 ### Formato H5P o HTML
 
