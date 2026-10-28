@@ -23,6 +23,7 @@ import auto_prizma.api.routes.analysis  # noqa: F401
 import auto_prizma.api.routes.uploads  # noqa: F401
 import auto_prizma.api.routes.reports  # noqa: F401
 import auto_prizma.api.routes.courses  # noqa: F401
+import auto_prizma.api.routes.auditor  # noqa: F401
 import auto_prizma.api.routes.health  # noqa: F401
 import auto_prizma.api.routes.moodle_resources  # noqa: F401
 

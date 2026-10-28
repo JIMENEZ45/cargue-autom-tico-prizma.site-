@@ -132,7 +132,6 @@ _CLAVES_MENU = {
     "Cargue actual": "cargue",
     "Historial": "historial",
     "Reportes": "reportes",
-    "Mi contraseña": "clave",
 }
 
 

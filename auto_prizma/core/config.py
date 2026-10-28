@@ -109,6 +109,13 @@ HISTORIAL_PATH = os.path.join(
     "historial.json",
 )
 
+# Auditorias de recursos (matriz de recursos del curso vs ZIP de archivos).
+# Generadas por el auditor integrado (curso-checker): reporte .md + .json.
+AUDITORIA_DIR = os.path.join(
+    DATA_DIR,
+    "auditorias",
+)
+
 # Estado acumulado por curso: que actividades de cada curso ya quedaron
 # subidas a PRIZMA y cual es la causa de las que faltan.
 ESTADO_CURSOS_PATH = os.path.join(

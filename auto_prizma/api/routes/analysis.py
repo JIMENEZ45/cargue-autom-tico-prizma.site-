@@ -15,11 +15,12 @@ import zipfile
 
 from auto_prizma.core.application import app
 from auto_prizma.core.clock import _ahora_colombia_iso
-from auto_prizma.core.config import FORMATOS_RECURSO_INTERACTIVO
+from auto_prizma.core.config import FORMATOS_RECURSO_INTERACTIVO, TEMP_DIR
 from auto_prizma.services.auth import _usuario_actual
 from auto_prizma.services.course_state import preseleccion_faltantes
 from auto_prizma.integrations.google.drive import _resolver_hoja_objetivo
 from auto_prizma.services.upload_jobs import create_analyzed_job
+from auto_prizma.services.h5p_preview import preview_h5p_titles
 from auto_prizma.services.matrix_analysis import (
     _normalizar_contenido_matriz_archivo,
     _parsear_datos_academicos,
@@ -201,6 +202,10 @@ async def analizar(
         except zipfile.BadZipFile:
             return generar_html(error="El ZIP no es válido.")
 
+        revision_h5p = None
+        if formato_recurso == "H5P":
+            revision_h5p = preview_h5p_titles(contenido_zip, hojas, TEMP_DIR)
+
         # ====================================================
         # CREAR TRABAJO (guarda archivos, prevalida Drive-ZIP y lo registra)
         # ====================================================
@@ -233,6 +238,9 @@ async def analizar(
             test_info=test_info,
             formato_recurso=formato_recurso,
         )
+        resultado_revision = dict(resultado)
+        if revision_h5p is not None:
+            resultado_revision["revision_h5p"] = revision_h5p
 
         # ====================================================
         # PRE-SELECCION DE FALTANTES (reintento sin volver a elegir)
@@ -252,7 +260,7 @@ async def analizar(
             )
 
         return generar_html(
-            resultado=resultado,
+            resultado=resultado_revision,
             trabajo_id=trabajo_id,
             seleccion_actual=faltantes or None,
             aviso=aviso_preseleccion,

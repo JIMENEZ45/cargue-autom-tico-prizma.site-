@@ -11,11 +11,13 @@ se subio alguna vez y un intento posterior fallo, sigue contando como subida
 (el archivo ya esta en PRIZMA), pero se conserva el ultimo error visible.
 """
 
+import csv
+import os
 import threading
 import unicodedata
 
 from auto_prizma.core.clock import _ahora_colombia_iso
-from auto_prizma.core.config import ESTADO_CURSOS_PATH
+from auto_prizma.core.config import ESTADO_CURSOS_PATH, RESULTADOS_DIR
 from auto_prizma.core.storage import read_json, write_json_atomic
 from auto_prizma.services.auth import _usuario_actual
 from auto_prizma.services.error_messages import extraer_codigo_error, mensaje_error
@@ -145,6 +147,24 @@ def registrar_resultado_actividad(actividad, resultado, observacion, recurso="")
             item["fila"] = fila
             if recurso:
                 item["recurso"] = str(recurso)
+
+            # Detalle que necesitan el reintento individual y la verificacion
+            # en PRIZMA. Los registros antiguos no lo traen y se regeneran
+            # desde el reporte CSV del cargue (ver _completar_desde_reportes).
+            categoria = str(actividad.get("categoria_prizma") or "").strip()
+            if categoria:
+                item["categoria"] = categoria
+            for campo in (
+                "semana",
+                "unidad",
+                "tipo_archivo",
+                "tipo_recurso",
+                "enlace",
+                "url_recurso",
+            ):
+                valor = actividad.get(campo)
+                if valor is not None and str(valor).strip():
+                    item[campo] = str(valor).strip()
 
             if es_ok:
                 item["veces_ok"] = int(item.get("veces_ok") or 0) + 1
@@ -330,3 +350,258 @@ def preseleccion_faltantes(hojas_analizadas, usuario_app=None):
 
 def total_faltantes(usuario_app=None):
     return sum(r["faltantes"] for r in resumen_cursos(usuario_app))
+
+
+# ============================================================
+# REINTENTO INDIVIDUAL Y VERIFICACION EN PRIZMA
+# ============================================================
+
+CATEGORIAS_PRIZMA = ("OVI", "OVA", "CHALLENGE")
+
+MENSAJE_SIN_DETALLE = (
+    "Este registro es anterior y no guardo el detalle de la actividad. "
+    "Sube la matriz otra vez en Inicio (aunque sea sin cargar nada) para "
+    "regenerarlo y vuelve a intentarlo."
+)
+
+
+def _falta_detalle(item):
+    """True si el registro aun no guarda categoria/tipo de la actividad."""
+    return (
+        not str(item.get("categoria") or "").strip()
+        or not str(item.get("tipo_archivo") or "").strip()
+    )
+
+
+def _fila_reporte(curso, hoja, fila):
+    """Semana/unidad/categoria/tipo de la fila en el reporte CSV mas reciente.
+
+    Los registros hechos antes de guardar el detalle no lo traen; el CSV de
+    data/reportes tiene una fila por actividad con esos datos, asi que se usa
+    para regenerarlo. Solo se busca el curso indicado (una hoja "Matriz" fila
+    9 puede ser otra actividad en otro curso).
+    """
+    fila_int = _fila_int(fila)
+    if fila_int is None or not curso:
+        return None
+
+    try:
+        nombres = sorted(os.listdir(RESULTADOS_DIR), reverse=True)
+    except OSError:
+        return None
+
+    for nombre in nombres:
+        if not nombre.endswith(".csv"):
+            continue
+        try:
+            with open(
+                os.path.join(RESULTADOS_DIR, nombre),
+                newline="",
+                encoding="utf-8-sig",
+            ) as fh:
+                for fila_csv in csv.DictReader(fh):
+                    if str(fila_csv.get("Hoja") or "").strip() != str(hoja or "").strip():
+                        continue
+                    if (
+                        str(fila_csv.get("Curso") or "").strip().casefold()
+                        != str(curso).strip().casefold()
+                    ):
+                        continue
+                    if _fila_int(fila_csv.get("Fila Excel")) != fila_int:
+                        continue
+                    return {
+                        "semana": str(fila_csv.get("Semana") or "").strip(),
+                        "unidad": str(fila_csv.get("Unidad") or "").strip(),
+                        "categoria": str(fila_csv.get("Categoría") or "").strip().upper(),
+                        "tipo_archivo": str(fila_csv.get("Tipo") or "").strip().upper(),
+                    }
+        except (OSError, UnicodeDecodeError, csv.Error):
+            continue
+    return None
+
+
+def _completar_desde_reportes(curso, actividades):
+    """Rellena en sitio los items sin categoria/tipo usando el reporte CSV.
+
+    Returns:
+        True si se completo al menos un item (el caller debe guardar).
+    """
+    pendientes = [
+        item
+        for item in actividades.values()
+        if isinstance(item, dict) and _falta_detalle(item)
+    ]
+    if not pendientes:
+        return False
+
+    completado = False
+    for item in pendientes:
+        extra = _fila_reporte(curso, item.get("hoja"), item.get("fila"))
+        if not extra:
+            continue
+        for campo, valor in extra.items():
+            if not str(item.get(campo) or "").strip():
+                item[campo] = valor
+        completado = True
+    return completado
+
+
+def _actividad_desde_item(registro, item):
+    """Diccionario con la forma que espera el motor, o (None, motivo humano)."""
+    nombre = str(item.get("nombre") or "").strip()
+    programa = str(registro.get("programa") or "").strip()
+    categoria = str(item.get("categoria") or "").strip().upper()
+    tipo_archivo = str(item.get("tipo_archivo") or "").strip().upper()
+
+    if not nombre:
+        return None, "La actividad no tiene nombre registrado."
+    if not programa:
+        return None, "El curso no tiene programa registrado."
+    if not categoria or not tipo_archivo:
+        return None, MENSAJE_SIN_DETALLE
+    if categoria not in CATEGORIAS_PRIZMA:
+        return None, (
+            "La categoria registrada (" + categoria + ") no es valida en PRIZMA."
+        )
+
+    return {
+        "fila_excel": item.get("fila"),
+        "hoja": str(item.get("hoja") or ""),
+        "programa": programa,
+        "curso": str(registro.get("curso") or ""),
+        "semana": str(item.get("semana") or ""),
+        "unidad": str(item.get("unidad") or ""),
+        "nombre": nombre,
+        "categoria_prizma": categoria,
+        "tipo_recurso": str(item.get("tipo_recurso") or ""),
+        "tipo_archivo": tipo_archivo,
+        "enlace": str(item.get("enlace") or ""),
+        "url_recurso": str(item.get("url_recurso") or ""),
+        "recurso": str(item.get("recurso") or ""),
+    }, None
+
+
+def _registro_del_curso(datos, id_curso, usuario_app):
+    """Registro del curso o (None, motivo) si no existe o no es del usuario."""
+    registro = datos.get(id_curso)
+    if not isinstance(registro, dict):
+        return None, "Ese curso no tiene actividades registradas."
+    if usuario_app and registro.get("usuario_app") not in (None, "", usuario_app):
+        return None, "Ese curso no pertenece a tu usuario."
+    return registro, None
+
+
+def actividad_para_reintento(id_curso, clave, usuario_app=None):
+    """(actividad, error) para subir un recurso elegido a mano a UNA actividad.
+
+    La actividad se reconstruye con lo registrado en data/estado_cursos.json;
+    si le faltan datos (registros antiguos) se regeneran desde el reporte CSV
+    del cargue que los produjo.
+    """
+    with ESTADO_LOCK:
+        datos = _cargar_estado()
+        registro, error = _registro_del_curso(datos, id_curso, usuario_app)
+        if error:
+            return None, error
+
+        actividades = registro.get("actividades")
+        item = actividades.get(clave) if isinstance(actividades, dict) else None
+        if not isinstance(item, dict):
+            return None, "Esa actividad no esta registrada en el curso."
+
+        if _falta_detalle(item) and _completar_desde_reportes(
+            str(registro.get("curso") or ""),
+            actividades,
+        ):
+            _guardar_estado(datos)
+
+        return _actividad_desde_item(registro, item)
+
+
+def actividades_para_verificar(id_curso, usuario_app=None):
+    """(lista de (clave, actividad), sin_datos, error) de un curso.
+
+    `lista` es lo que se puede consultar en PRIZMA; `sin_datos` son registros
+    incompletos que se informan como "sin datos" en vez de omitirse en silencio.
+    """
+    with ESTADO_LOCK:
+        datos = _cargar_estado()
+        registro, error = _registro_del_curso(datos, id_curso, usuario_app)
+        if error:
+            return None, None, error
+
+        actividades = registro.get("actividades")
+        if not isinstance(actividades, dict) or not actividades:
+            return None, None, "Ese curso no tiene actividades registradas."
+
+        if _completar_desde_reportes(str(registro.get("curso") or ""), actividades):
+            _guardar_estado(datos)
+
+        lista = []
+        sin_datos = []
+        for clave, item in actividades.items():
+            if not isinstance(item, dict):
+                continue
+            actividad, motivo = _actividad_desde_item(registro, item)
+            if actividad is None:
+                sin_datos.append(
+                    {
+                        "clave": clave,
+                        "nombre": str(item.get("nombre") or "(sin nombre)"),
+                        "motivo": motivo,
+                    }
+                )
+            else:
+                lista.append((clave, actividad))
+
+        return lista, sin_datos, None
+
+
+def marcar_verificacion(id_curso, resultados, usuario_app=None):
+    """Aplica al estado lo que encontro la verificacion en PRIZMA.
+
+    resultados: [{"clave", "verificacion"}] con "existe", "no_esta" o
+    "no_se_pudo". Solo se tocan hechos comprobados:
+
+    - "no_esta" en una actividad que estaba subida: vuelve a faltar (no
+      aparece en PRIZMA).
+    - Todo lo demas deja constancia (verificacion + fecha) sin cambiar si
+      cuenta como subida o faltante.
+
+    Nunca propaga excepciones.
+    """
+    try:
+        with ESTADO_LOCK:
+            datos = _cargar_estado()
+            registro, error = _registro_del_curso(datos, id_curso, usuario_app)
+            if error:
+                return
+
+            actividades = registro.get("actividades")
+            if not isinstance(actividades, dict):
+                return
+
+            ahora = _ahora_colombia_iso()
+            for entrada in resultados or []:
+                if not isinstance(entrada, dict):
+                    continue
+                item = actividades.get(str(entrada.get("clave") or ""))
+                if not isinstance(item, dict):
+                    continue
+
+                verificacion = str(entrada.get("verificacion") or "").strip()
+                item["verificacion"] = verificacion
+                item["verificado_en"] = ahora
+                item["verificacion_detalle"] = str(entrada.get("detalle") or "").strip()
+
+                if verificacion == "no_esta" and str(item.get("ok_en") or ""):
+                    item["ok_en"] = ""
+                    item["estado"] = ESTADO_ERROR
+                    item["codigo"] = "ERROR_NO_ESTA_EN_PRIZMA"
+                    item["motivo"] = "Verificación: la actividad no aparece en PRIZMA."
+                    item["ultimo_error_en"] = ahora
+
+            registro["actualizado"] = ahora
+            _guardar_estado(datos)
+    except Exception:
+        pass

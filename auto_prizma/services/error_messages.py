@@ -15,6 +15,10 @@ MENSAJES_ERROR = {
     "ERROR_LOGIN_PRIZMA": (
         "PRIZMA no aceptó el usuario o la contraseña. Revisa las credenciales."
     ),
+    "ERROR_CONECTANDO_PRIZMA": (
+        "No fue posible conectar con PRIZMA para iniciar sesión. Revisa la "
+        "conexión o que PRIZMA esté disponible."
+    ),
     "ERROR_GOOGLE_NO_CONECTADO": (
         "Google no está conectado. Conecta Google para usar recursos de Drive."
     ),
@@ -169,6 +173,20 @@ MENSAJES_ERROR = {
     "ERROR_DESCONOCIDO": (
         "Falló por una razón no identificada. Revisa el reporte o el log."
     ),
+    "ERROR_CANCELADO": (
+        "El proceso fue cancelado por el usuario."
+    ),
+    "ERROR_ARCHIVO_RECURSO_NO_VALIDO": (
+        "El archivo elegido como recurso no se pudo leer desde el disco; "
+        "vuelve a elegirlo."
+    ),
+    "ERROR_PROCESANDO_ACTIVIDAD": (
+        "Ocurrió un error inesperado al procesar la actividad en PRIZMA."
+    ),
+    "ERROR_NO_ESTA_EN_PRIZMA": (
+        "La verificación en PRIZMA no encontró la actividad: no está en el "
+        "curso."
+    ),
 }
 
 
@@ -199,12 +217,23 @@ def extraer_codigo_error(texto):
 def mensaje_error(codigo_o_texto):
     """Devuelve la frase humana para un codigo (o texto con codigo).
 
-    Si no hay traduccion, devuelve el texto original sin tocar.
+    Si el motor anexo un detalle ("codigo: lo que paso"), la frase se
+    completa con ese detalle: el usuario ve que archivo pide el Excel o
+    donde esta la actividad repetida, no solo el codigo. Si no hay
+    traduccion, devuelve el texto original sin tocar.
     """
-    codigo = extraer_codigo_error(codigo_o_texto)
-    if codigo:
-        return MENSAJES_ERROR[codigo]
-    return str(codigo_o_texto or "")
+    texto = str(codigo_o_texto or "")
+    codigo = extraer_codigo_error(texto)
+    if not codigo:
+        return texto
+    base = MENSAJES_ERROR[codigo]
+    detalle = ""
+    posicion = texto.find(codigo)
+    if posicion >= 0:
+        detalle = texto[posicion + len(codigo):].lstrip(" \t:|-").strip()
+    if not detalle:
+        return base
+    return f"{base} Detalle: {detalle}"
 
 
 def es_codigo_error(texto):

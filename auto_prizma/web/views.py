@@ -589,6 +589,47 @@ def generar_html(
         </section>
         """
 
+    bloque_revision_h5p = ""
+    revision_h5p = resultado.get("revision_h5p") or {}
+    if revision_h5p:
+        if not revision_h5p.get("ok"):
+            bloque_revision_h5p = (
+                '<section class="panel aviso ambar"><div><strong>No se pudo previsualizar '
+                'el título H5P</strong><p>' + e(revision_h5p.get("error"))
+                + " El análisis y el cargue pueden continuar.</p></div></section>"
+            )
+        else:
+            filas_h5p = ""
+            estados_h5p = {"ok": ("badge-verde", "Coincide"), "alerta": ("badge-ambar", "Revisar"),
+                           "faltante": ("badge-rojo", "Falta"), "fuera-de-alcance": ("badge-gris", "No aplica")}
+            for item in revision_h5p.get("resultados") or []:
+                estado_clase, estado_texto = estados_h5p.get(str(item.get("estado") or ""), ("badge-gris", "Revisar"))
+                titulos_contenido = " · ".join(str(t) for t in item.get("titulos_contenido") or [])
+                filas_h5p += (
+                    "<tr><td>" + e(item.get("fila")) + "</td>"
+                    + "<td><strong>" + e(item.get("nombre")) + "</strong></td>"
+                    + "<td>" + e(item.get("archivo")) + "</td>"
+                    + "<td>" + (e(item.get("titulo_h5p")) or "<span class=\"muted\">Sin título interno</span>") + "</td>"
+                    + "<td>" + (e(titulos_contenido) or "—") + "</td>"
+                    + '<td><span class="badge ' + estado_clase + '">' + estado_texto + "</span><small class=\"detalle-h5p\">"
+                    + e(item.get("detalle")) + "</small></td></tr>"
+                )
+            if filas_h5p:
+                bloque_revision_h5p = (
+                    '<section class="panel revision-h5p"><div class="titulo-bloque">'
+                    '<h2>Previsualización y títulos H5P</h2>'
+                    '<p>Compara el título de la matriz, el archivo del ZIP, el título del paquete y los títulos visibles dentro del contenido.</p>'
+                    '</div><div class="tabla-scroll"><table class="tabla"><thead><tr>'
+                    '<th>Fila</th><th>Matriz</th><th>Archivo del ZIP</th><th>Título del paquete</th>'
+                    '<th>Títulos internos visibles</th><th>Resultado</th></tr></thead><tbody>'
+                    + filas_h5p + "</tbody></table></div></section>"
+                )
+            else:
+                bloque_revision_h5p = (
+                    '<section class="panel aviso info"><div><strong>No hay paquetes H5P para comparar</strong>'
+                    '<p>Esta matriz y el ZIP no contienen actividades H5P seleccionadas.</p></div></section>'
+                )
+
     contenido = f"""
     <div class="revision">
     <section id="cargue-principal" class="panel encabezado-exito">
@@ -609,6 +650,7 @@ def generar_html(
     </section>
 
     {bloque_test_html}
+    {bloque_revision_h5p}
     {bloque_advertencias_revision}
     {bloque_error_revision}
     {bloque_aviso_revision}
@@ -915,6 +957,11 @@ _CSS_INICIO = r"""
 .test-preparado-texto { flex: 1; min-width: 220px; }
 .test-preparado h3 { margin: 0 0 4px; font-size: 18px; color: var(--naranja); }
 .test-preparado p { margin: 0; color: var(--texto-2); font-size: 14px; }
+.revision-h5p { padding: 20px; }
+.revision-h5p .tabla-scroll { max-height: 420px; overflow: auto; margin-top: 14px; }
+.revision-h5p td { vertical-align: top; min-width: 110px; }
+.revision-h5p td:last-child { min-width: 240px; }
+.detalle-h5p { display: block; margin-top: 5px; color: var(--muted); white-space: normal; }
 
 .advertencias { overflow: hidden; border-color: var(--ambar-borde); }
 .advertencias-cabecera {

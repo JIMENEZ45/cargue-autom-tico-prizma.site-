@@ -332,14 +332,23 @@ _CSS_CARGUES = r"""
 """
 
 
-def _pagina_progreso():
-    """Pagina de progreso de un cargue (se guarda en el trabajo para /proceso/<id>)."""
+def _pagina_progreso(
+    titulo="Cargue en progreso",
+    lista_titulo="Actividades del cargue",
+    active="cargue",
+):
+    """Pagina de progreso de un trabajo (se guarda en el para /proceso/<id>).
+
+    Es generica: la usan los cargues normales y los trabajos cortos de
+    /cursos (reintento individual y verificacion), que solo cambian el
+    titulo y la etiqueta de la lista.
+    """
     contenido = """
     <section id="cargue-progreso" class="panel cabecera-progreso">
         <div class="cabecera-linea">
             <div class="cabecera-titulo">
                 <span class="icono-tile">__ICONO_SUBIR__</span>
-                <h1>Cargue en progreso</h1>
+                <h1>__TITULO__</h1>
             </div>
             <div class="porcentaje"><strong id="porcentaje">0%</strong> completado</div>
         </div>
@@ -364,7 +373,7 @@ def _pagina_progreso():
 
     <section class="zona">
         <div class="panel lista-panel">
-            <h2 class="titulo-panel">Actividades del cargue</h2>
+            <h2 class="titulo-panel">__LISTA_TITULO__</h2>
             <div id="lista-actividades" class="lista-actividades">
                 <div class="actividad-progreso">Preparando lista de actividades...</div>
             </div>
@@ -400,11 +409,13 @@ def _pagina_progreso():
         .replace("__ICONO_GIRAR__", icon("girar"))
         .replace("__ICONO_OK__", icon("check-circulo"))
         .replace("__ICONO_ERROR__", icon("alerta-circulo"))
+        .replace("__TITULO__", titulo)
+        .replace("__LISTA_TITULO__", lista_titulo)
     )
     return render_page(
-        "Cargue en progreso",
+        titulo,
         contenido,
-        active="cargue",
+        active=active,
         page_css=_CSS_PROGRESO,
         page_js=_JS_PROGRESO,
     )

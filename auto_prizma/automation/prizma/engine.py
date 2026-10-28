@@ -16,6 +16,7 @@ import shutil
 import traceback
 import time
 import threading
+import tempfile
 import html as html_lib
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -39,6 +40,7 @@ from auto_prizma.core.config import (  # noqa: E402
 )
 from auto_prizma.automation.prizma.html_field import (  # noqa: E402
     NOMBRE_ARCHIVO_DESCONOCIDO,
+    XPATH_TARJETA_ARCHIVO_RECURSO,
     XPATH_SECCION_RECURSO,
     archivo_en_recurso,
     es_campo_de_texto as _es_campo_de_texto,
@@ -320,6 +322,15 @@ def limpiar_prefijo_tecnico_recurso(
             nombre_archivo
         )
     )[0]
+
+    # Copias de Google Drive: "archivo (1).h5p", "archivo (2).pdf".
+    # Sin quitar esto, el " (1)" deja el nombre mas largo que la actividad
+    # y el prefijo deja de coincidir (fallo real: filas 24 y 46).
+    nombre_sin_extension = re.sub(
+        r"\s*\(\d+\)$",
+        "",
+        nombre_sin_extension,
+    ).strip()
 
     nombre_n = normalizar_texto(
         nombre_sin_extension
@@ -1205,6 +1216,13 @@ def puntuar_recurso(
         )
     )[0]
 
+    # Copias de Google Drive: "archivo (1).h5p".
+    nombre_sin_extension = re.sub(
+        r"\s*\(\d+\)$",
+        "",
+        nombre_sin_extension,
+    ).strip()
+
     archivo_n = normalizar_texto(
         nombre_sin_extension
     )
@@ -1252,13 +1270,21 @@ def puntuar_recurso(
 
     if palabras_actividad:
 
-        comunes = (
-            palabras_actividad
-            & palabras_archivo
+        # Tambien cuenta palabras cortadas por el paquete o por Drive:
+        # "investigac" reconoce "investigacion" y "problemas" a "problema".
+        comunes = sum(
+            1
+            for palabra in palabras_actividad
+            if any(
+                palabra == otra
+                or (len(otra) >= 4 and palabra.startswith(otra))
+                or otra.startswith(palabra)
+                for otra in palabras_archivo
+            )
         )
 
         porcentaje = (
-            len(comunes)
+            comunes
             / len(palabras_actividad)
         )
 
@@ -1390,6 +1416,37 @@ def prevalidar_recursos_drive_zip(
 # ============================================================
 # RESOLVER RECURSO
 # ============================================================
+
+def archivo_parecido_a_actividad(
+    actividad,
+    indice_recursos,
+    umbral=50,
+):
+    """Mejor archivo del ZIP parecido a la actividad aunque no llegue al
+    umbral de seleccion.
+
+    Sirve unicamente para explicar ERROR_RECURSO_NO_ENCONTRADO: decirle al
+    usuario que archivo si hay en el ZIP en vez de solo "no se encontro".
+    Devuelve "" si no hay nada medianamente parecido.
+    """
+    tipo = str(actividad.get("tipo_archivo") or "").upper()
+    extension = {"H5P": ".h5p", "PDF": ".pdf", "HTML": ".html"}.get(tipo)
+    if not extension:
+        return ""
+
+    mejor = ""
+    mejor_puntaje = umbral
+    for recurso in indice_recursos:
+        if recurso.get("extension") != extension:
+            continue
+        puntaje = puntuar_recurso(recurso["nombre"], actividad)
+        if recurso_es_prefijo_de_actividad(recurso["nombre"], actividad):
+            puntaje = max(puntaje, 99)
+        if puntaje >= mejor_puntaje:
+            mejor_puntaje = puntaje
+            mejor = recurso["nombre"]
+    return mejor
+
 
 def resolver_recurso(
     actividad,
@@ -1623,6 +1680,26 @@ def resolver_recurso(
                     )
 
             else:
+                referencia = str(actividad.get("enlace") or "").strip()
+                parecido = archivo_parecido_a_actividad(
+                    actividad,
+                    indice_recursos,
+                )
+                partes = []
+                if referencia:
+                    partes.append(
+                        f"el Excel pide '{referencia}' pero no está en el ZIP"
+                    )
+                if parecido:
+                    partes.append(
+                        f"hay un archivo parecido a la actividad: '{parecido}'"
+                    )
+                if partes:
+                    return (
+                        None,
+                        "ERROR_RECURSO_NO_ENCONTRADO: "
+                        + "; ".join(partes),
+                    )
                 return (
                     None,
                     "ERROR_RECURSO_NO_ENCONTRADO",
@@ -3003,6 +3080,31 @@ def _buscar_exacta_dos_intentos(
     )
 
 
+def _error_duplicada(coincidencias):
+    """ERROR_ACTIVIDAD_DUPLICADA con el texto de las filas repetidas.
+
+    Sin el detalle el usuario solo ve "esta duplicada" y no sabe ni cuantas
+    veces ni donde: con el texto que PRIZMA muestra (nombre, semana,
+    unidad) puede ubicarlas y borrar la que sobra.
+    """
+    textos = []
+    for coincidencia in coincidencias[:3]:
+        texto = re.sub(
+            r"\s+",
+            " ",
+            str(coincidencia.get("texto") or ""),
+        ).strip()
+        if texto and texto not in textos:
+            textos.append(texto[:200])
+    if not textos:
+        return "ERROR_ACTIVIDAD_DUPLICADA"
+    return (
+        "ERROR_ACTIVIDAD_DUPLICADA: aparece "
+        f"{len(coincidencias)} veces en PRIZMA — "
+        + " | ".join(f"«{texto}»" for texto in textos)
+    )
+
+
 # ============================================================
 # BUSCAR ACTIVIDAD
 # ============================================================
@@ -3102,10 +3204,19 @@ def buscar_actividad_correcta(
 
     if len(coincidencias) > 1:
         print("Coincidencias exactas:", len(coincidencias))
-        return (
-            None,
-            "ERROR_ACTIVIDAD_DUPLICADA",
+        # La tabla puede seguir re-renderizandose (carga asincrona) y la
+        # misma fila salir escaneada en dos paginas: un re-escaneo decide
+        # si la duplicidad es real antes de fallar.
+        reintento = _buscar_termino_estable(
+            pagina,
+            buscador,
+            actividad,
+            nombre_exacto,
         )
+        print("Coincidencias tras re-escaneo:", len(reintento))
+        if len(reintento) > 0:
+            coincidencias = reintento
+            termino_encontrado = nombre_exacto
 
     # Solo si los dos intentos exactos quedaron en cero usamos los fallbacks
     # existentes. La validación de la fila continúa siendo estricta.
@@ -3126,7 +3237,7 @@ def buscar_actividad_correcta(
                 print("Coincidencias exactas:", len(coincidencias_intento))
                 return (
                     None,
-                    "ERROR_ACTIVIDAD_DUPLICADA",
+                    _error_duplicada(coincidencias_intento),
                 )
 
             if len(coincidencias_intento) == 1:
@@ -3171,7 +3282,7 @@ def buscar_actividad_correcta(
     if len(coincidencias) > 1:
         return (
             None,
-            "ERROR_ACTIVIDAD_DUPLICADA",
+            _error_duplicada(coincidencias),
         )
 
     coincidencia = coincidencias[0]
@@ -4854,6 +4965,7 @@ def procesar_actividad(
     captura,
     actividades_curso,
     estado_navegacion=None,
+    recurso_manual=None,
 ):
 
     print()
@@ -4883,42 +4995,61 @@ def procesar_actividad(
     print("======================================")
 
     # 1. VALIDAR CARPETA DE RECURSO EN GOOGLE DRIVE (SI EXISTE)
-
-    error_carpeta = validar_carpeta_drive_para_actividad(
-        actividad
-    )
-
-    if error_carpeta:
-        return {
-            "ok": False,
-            "error": error_carpeta,
-            "recurso": "",
-        }
-
     # 2. RECURSO DEL ZIP
+    #
+    # En el reintento individual el archivo lo entrega el usuario
+    # (recurso_manual): se usa tal cual, sin buscar en Drive ni en el ZIP.
 
-    recurso, error = resolver_recurso(
-        actividad,
-        indice_recursos,
-        carpeta_temp,
-        actividades_curso,
-    )
+    if recurso_manual:
 
-    if error:
+        ruta_recurso = str(recurso_manual)
+        nombre_recurso = os.path.basename(ruta_recurso)
 
-        return {
-            "ok": False,
-            "error": error,
-            "recurso": "",
-        }
+        if not os.path.isfile(ruta_recurso):
 
-    ruta_recurso = recurso[
-        "ruta"
-    ]
+            return {
+                "ok": False,
+                "error":
+                    "ERROR_ARCHIVO_RECURSO_NO_VALIDO",
+                "recurso":
+                    nombre_recurso,
+            }
 
-    nombre_recurso = recurso[
-        "nombre_original"
-    ]
+    else:
+
+        error_carpeta = validar_carpeta_drive_para_actividad(
+            actividad
+        )
+
+        if error_carpeta:
+            return {
+                "ok": False,
+                "error": error_carpeta,
+                "recurso": "",
+            }
+
+        recurso, error = resolver_recurso(
+            actividad,
+            indice_recursos,
+            carpeta_temp,
+            actividades_curso,
+        )
+
+        if error:
+
+            return {
+                "ok": False,
+                "error": error,
+                "recurso": "",
+            }
+
+        ruta_recurso = recurso[
+            "ruta"
+        ]
+
+        nombre_recurso = recurso[
+            "nombre_original"
+        ]
 
     # Modo HTML: el codigo del archivo va al campo "Html" (no al campo "Recurso").
     es_html = str(actividad.get("tipo_archivo") or "").upper() == "HTML"
@@ -4982,6 +5113,30 @@ def procesar_actividad(
                 "ERROR_ABRIENDO_EDICION",
             "recurso":
                 nombre_recurso,
+        }
+
+    # En un cargue automático repetido, no volver a subir el mismo recurso
+    # cuando PRIZMA ya muestra ese archivo en la actividad. Un reintento manual
+    # con archivo explícito sí debe respetar la intención de reemplazarlo.
+    recurso_ya_montado = (
+        not recurso_manual and archivo_visible(pagina, nombre_recurso)
+    )
+    if not recurso_manual and es_html:
+        contenido_esperado, error_lectura = leer_archivo_html(ruta_recurso)
+        editor_html = _localizar_editor_html(pagina)
+        if not error_lectura and editor_html is not None:
+            recurso_ya_montado = (
+                normalizar_saltos(_texto_editor_html(editor_html))
+                == normalizar_saltos(contenido_esperado)
+            )
+
+    if recurso_ya_montado:
+        print("Recurso ya montado; se omite:", nombre_recurso)
+        cancelar_edicion_segura(pagina)
+        return {
+            "ok": True,
+            "omitido": True,
+            "recurso": nombre_recurso,
         }
 
     # 6. PREPARAR CAMPOS SEGÚN CATEGORÍA
@@ -5740,6 +5895,459 @@ def _abrir_sesion_inicial(
     return None
 
 
+# ============================================================
+# REINTENTO INDIVIDUAL: UNA ACTIVIDAD, UN RECURSO ELEGIDO A MANO
+# ============================================================
+
+def subir_actividad_manual(
+    usuario_prizma,
+    contrasena_prizma,
+    actividad,
+    ruta_archivo,
+    carpeta_temp,
+    estado,
+    indice_recursos=None,
+):
+    """Sube UN recurso (archivo entregado por el usuario) a UNA actividad.
+
+    Mismo camino que el cargue completo pero para una sola actividad: login,
+    listado, categoria, edicion y guardado, con un reintento en sesion limpia
+    si el fallo es estructural. El archivo se usa tal cual (recurso_manual),
+    sin buscar en Drive ni en el ZIP. Si no se entrega ruta_archivo, resuelve
+    el recurso desde indice_recursos (ZIP original).
+
+    Returns:
+        dict con {"ok", "error", "recurso"} como procesar_actividad.
+    """
+    nombre_actividad = str(actividad.get("nombre") or "")
+    respuestas = []
+    captura = {"activa": False}
+    estado_navegacion = {"categoria_actual": None}
+    resultado = None
+
+    actualizar_estado(
+        estado,
+        etapa="login",
+        mensaje="Iniciando sesión en PRIZMA...",
+        total=1,
+        procesadas=0,
+        exitosas=0,
+        errores=0,
+        terminado=False,
+    )
+
+    with sync_playwright() as p:
+        navegador = None
+
+        def registrar_respuesta(response):
+            _registrar_respuesta_prizma(
+                response,
+                respuestas,
+                captura,
+            )
+
+        def registrar_fallo(request):
+            _registrar_fallo_prizma(
+                request,
+                captura,
+            )
+
+        def abrir_sesion(motivo=""):
+            nonlocal navegador
+            estado_navegacion["categoria_actual"] = None
+            if motivo:
+                print("⚠️ Reiniciando sesión PRIZMA:", motivo)
+            if navegador is not None:
+                try:
+                    navegador.close()
+                except Exception:
+                    pass
+            navegador = p.chromium.launch(
+                headless=True,
+                args=list(CHROMIUM_ARGS),
+            )
+            pagina = navegador.new_page(
+                viewport=dict(VIEWPORT_NAVEGADOR)
+            )
+            pagina.on("response", registrar_respuesta)
+            pagina.on("requestfailed", registrar_fallo)
+            iniciar_sesion_prizma(
+                pagina,
+                usuario_prizma,
+                contrasena_prizma,
+            )
+            return pagina
+
+        try:
+            pagina = _abrir_sesion_inicial(abrir_sesion, estado)
+        except Exception as error:
+            texto = str(error).strip()
+            if navegador is not None:
+                try:
+                    navegador.close()
+                except Exception:
+                    pass
+            if "ERROR_LOGIN_PRIZMA" in texto:
+                marca = "ERROR_LOGIN_PRIZMA"
+            else:
+                marca = "ERROR_CONECTANDO_PRIZMA"
+            return {
+                "ok": False,
+                "error": marca + ": " + (texto.splitlines() or [""])[0][:200],
+                "recurso": "",
+            }
+
+        if pagina is None:
+            # Cancelado durante la espera de la sesion.
+            return {
+                "ok": False,
+                "error": "ERROR_CANCELADO",
+                "recurso": "",
+            }
+
+        actualizar_estado(
+            estado,
+            etapa="procesando",
+            mensaje="Subiendo el recurso a: " + nombre_actividad,
+            procesadas=0,
+        )
+
+        try:
+            # Preflight: si no estamos en el listado, sesion limpia.
+            try:
+                listado_ok = asegurar_listado(pagina)
+            except Exception:
+                listado_ok = False
+            if not listado_ok:
+                pagina = abrir_sesion(
+                    "no fue posible confirmar el listado antes de la actividad"
+                )
+
+            for intento in (1, 2):
+                if _cancelacion_solicitada(estado):
+                    return {
+                        "ok": False,
+                        "error": "ERROR_CANCELADO",
+                        "recurso": "",
+                    }
+
+                try:
+                    resultado = procesar_actividad(
+                        pagina,
+                        actividad,
+                        indice_recursos or [],
+                        carpeta_temp,
+                        respuestas,
+                        captura,
+                        [actividad],
+                        estado_navegacion,
+                        recurso_manual=ruta_archivo or None,
+                    )
+                except Exception as error:
+                    traceback.print_exc()
+                    resultado = {
+                        "ok": False,
+                        "error": (
+                            "ERROR_PROCESANDO_ACTIVIDAD: "
+                            + str(error).strip()[:200]
+                        ),
+                        "recurso": "",
+                    }
+
+                if resultado.get("ok"):
+                    break
+
+                error_actual = str(resultado.get("error") or "")
+                es_ultimo = intento == 2
+                if es_ultimo or not _es_error_estructural_prizma(error_actual):
+                    break
+
+                # Mismo criterio del cargue: un fallo estructural se
+                # reintenta una sola vez con navegador limpio.
+                try:
+                    pagina = abrir_sesion(
+                        "reintento tras " + error_actual
+                    )
+                except Exception:
+                    traceback.print_exc()
+                    break
+        finally:
+            try:
+                if navegador is not None:
+                    navegador.close()
+            except Exception:
+                pass
+
+    return resultado
+
+
+# ============================================================
+# VERIFICACION (SOLO LECTURA): ¿LA ACTIVIDAD APARECE EN PRIZMA?
+# ============================================================
+
+def verificar_actividades_prizma(
+    usuario_prizma,
+    contrasena_prizma,
+    actividades,
+    estado,
+):
+    """Comprueba, sin tocar formularios, que cada actividad aparezca en PRIZMA.
+
+    ``actividades`` es [(clave, actividad), ...]. Por cada una entra a su
+    categoria, busca la fila y anota:
+
+    - "existe": aparece en el listado (si sale mas de una vez se anota),
+    - "no_esta": el curso no tiene esa actividad,
+    - "no_se_pudo": fallo la consulta (sesion, categoria, error de tabla).
+
+    Returns:
+        {"ok", "error", "resultados": [{"clave", "nombre", "verificacion",
+        "detalle"}]}
+    """
+    total = len(actividades)
+    resultados = []
+
+    actualizar_estado(
+        estado,
+        etapa="login",
+        mensaje="Iniciando sesión en PRIZMA para verificar el curso...",
+        total=total,
+        procesadas=0,
+        exitosas=0,
+        errores=0,
+        terminado=False,
+    )
+
+    with sync_playwright() as p:
+        navegador = None
+        estado_navegacion = {"categoria_actual": None}
+
+        def abrir_sesion(motivo=""):
+            nonlocal navegador
+            estado_navegacion["categoria_actual"] = None
+            if motivo:
+                print("⚠️ Reiniciando sesión PRIZMA:", motivo)
+            if navegador is not None:
+                try:
+                    navegador.close()
+                except Exception:
+                    pass
+            navegador = p.chromium.launch(
+                headless=True,
+                args=list(CHROMIUM_ARGS),
+            )
+            pagina = navegador.new_page(
+                viewport=dict(VIEWPORT_NAVEGADOR)
+            )
+            iniciar_sesion_prizma(
+                pagina,
+                usuario_prizma,
+                contrasena_prizma,
+            )
+            return pagina
+
+        try:
+            pagina = _abrir_sesion_inicial(abrir_sesion, estado)
+        except Exception as error:
+            texto = str(error).strip()
+            if navegador is not None:
+                try:
+                    navegador.close()
+                except Exception:
+                    pass
+            if "ERROR_LOGIN_PRIZMA" in texto:
+                marca = "ERROR_LOGIN_PRIZMA"
+            else:
+                marca = "ERROR_CONECTANDO_PRIZMA"
+            return {
+                "ok": False,
+                "error": marca + ": " + (texto.splitlines() or [""])[0][:200],
+                "resultados": resultados,
+            }
+
+        if pagina is None:
+            return {
+                "ok": False,
+                "error": "ERROR_CANCELADO",
+                "resultados": resultados,
+            }
+
+        try:
+            for numero, (clave, actividad) in enumerate(actividades, start=1):
+                if _cancelacion_solicitada(estado):
+                    return {
+                        "ok": False,
+                        "error": "ERROR_CANCELADO",
+                        "resultados": resultados,
+                    }
+
+                nombre = str(actividad.get("nombre") or "")
+                actualizar_estado(
+                    estado,
+                    etapa="verificando",
+                    mensaje=(
+                        "Verificando " + str(numero) + " de " + str(total)
+                        + ": " + nombre
+                    ),
+                    procesadas=numero - 1,
+                )
+
+                entrada = {
+                    "clave": clave,
+                    "nombre": nombre,
+                    "verificacion": "no_se_pudo",
+                    "detalle": "",
+                }
+
+                try:
+                    try:
+                        listado_ok = asegurar_listado(pagina)
+                    except Exception:
+                        listado_ok = False
+                    if not listado_ok:
+                        pagina = abrir_sesion(
+                            "listado no disponible durante la verificacion"
+                        )
+
+                    if not entrar_categoria(
+                        pagina,
+                        actividad["categoria_prizma"],
+                        estado_navegacion,
+                    ):
+                        entrada["detalle"] = (
+                            "No se pudo abrir la categoría "
+                            + str(actividad["categoria_prizma"]) + "."
+                        )
+                    else:
+                        fila, error = buscar_actividad_correcta(
+                            pagina,
+                            actividad,
+                        )
+                        if error:
+                            codigo = str(error)
+                            if (
+                                "ERROR_ACTIVIDAD_NO_ENCONTRADA" in codigo
+                                or "ERROR_CURSO_SIN_PLANTILLA" in codigo
+                            ):
+                                entrada["verificacion"] = "no_esta"
+                            elif "ERROR_ACTIVIDAD_DUPLICADA" in codigo:
+                                # Varias filas con el nombre: si esta, mas de
+                                # una vez; se conserva el detalle del motivo.
+                                entrada["verificacion"] = "existe"
+                            entrada["detalle"] = mensaje_error(codigo)
+                        else:
+                            entrada["verificacion"] = "existe"
+                            entrada["detalle"] = "Aparece en PRIZMA."
+                            if str(actividad.get("tipo_archivo") or "").upper() == "H5P":
+                                entrada["detalle"] += " " + _inspeccionar_h5p_montado(
+                                    pagina, fila, actividad
+                                )
+                except Exception:
+                    traceback.print_exc()
+                    entrada["verificacion"] = "no_se_pudo"
+                    entrada["detalle"] = (
+                        "No se pudo consultar la actividad (error inesperado)."
+                    )
+
+                resultados.append(entrada)
+
+                exitosas = sum(
+                    1 for r in resultados
+                    if r["verificacion"] == "existe"
+                )
+                errores = len(resultados) - exitosas
+                actualizar_estado(
+                    estado,
+                    procesadas=numero,
+                    exitosas=exitosas,
+                    errores=errores,
+                )
+        finally:
+            try:
+                if navegador is not None:
+                    navegador.close()
+            except Exception:
+                pass
+
+    return {
+        "ok": True,
+        "error": "",
+        "resultados": resultados,
+    }
+
+
+def _inspeccionar_h5p_montado(pagina, fila, actividad):
+    """Lee en modo solo lectura el H5P adjunto y contrasta su título con la matriz."""
+    ruta_temporal = ""
+    if not abrir_edicion(pagina, fila):
+        return "No se pudo abrir la actividad para revisar el H5P adjunto."
+    try:
+        nombre_archivo = archivo_en_recurso(pagina)
+        if not nombre_archivo:
+            return "No se detectó un archivo adjunto en el campo Recurso."
+
+        tarjeta = pagina.locator(XPATH_TARJETA_ARCHIVO_RECURSO)
+        botones = tarjeta.locator("button")
+        if botones.count() < 1:
+            return "Se encontró " + nombre_archivo + ", pero no su botón de vista previa/descarga."
+
+        descriptor, ruta_temporal = tempfile.mkstemp(suffix=".h5p", prefix="prizma_h5p_")
+        os.close(descriptor)
+        try:
+            with pagina.expect_download(timeout=12000) as descarga_info:
+                botones.first.click(timeout=5000)
+            descarga_info.value.save_as(ruta_temporal)
+        except Exception:
+            return "Se encontró " + nombre_archivo + ", pero PRIZMA no permitió leer su H5P para comparar el título."
+
+        # Se llama a la misma lógica de títulos usada por la pestaña Auditor.
+        from auto_prizma.auditor.procesar import clave as clave_auditor
+        from auto_prizma.auditor.procesar import leer_titulo_h5p, titulos_visibles_h5p
+
+        titulo, error = leer_titulo_h5p(ruta_temporal)
+        if error:
+            return "Archivo adjunto: " + nombre_archivo + "; H5P ilegible: " + str(error) + "."
+        titulo = str(titulo or "").strip()
+        esperado = str(actividad.get("nombre") or "").strip()
+        if titulo and clave_auditor(titulo) == clave_auditor(esperado):
+            return (
+                "Archivo adjunto: " + nombre_archivo
+                + '; título H5P coincide con la matriz ("' + titulo + '").'
+            )
+
+        visibles = titulos_visibles_h5p(ruta_temporal)
+        coincide_contenido = next(
+            (t for t in visibles if clave_auditor(t) == clave_auditor(esperado)),
+            "",
+        )
+        if coincide_contenido:
+            return (
+                "Archivo adjunto: " + nombre_archivo
+                + '; el título del paquete es "' + (titulo or "sin título")
+                + '", pero el contenido sí muestra el título de la matriz: "'
+                + coincide_contenido + '".'
+            )
+        visible = " · ".join(visibles[:3])
+        return (
+            "Archivo adjunto: " + nombre_archivo
+            + '; REVISAR: título del paquete "' + (titulo or "sin título")
+            + '" no coincide con matriz "' + esperado + '"'
+            + ("; títulos visibles del contenido: " + visible + "." if visible else ".")
+        )
+    except Exception as error:
+        print("No se pudo inspeccionar el H5P montado:", type(error).__name__)
+        return "Aparece en PRIZMA, pero no se pudo previsualizar el título interno del H5P."
+    finally:
+        try:
+            cancelar_edicion_segura(pagina)
+        finally:
+            if ruta_temporal:
+                try:
+                    os.remove(ruta_temporal)
+                except OSError:
+                    pass
+
+
 def ejecutar_cargue(
     ruta_excel,
     ruta_zip,
@@ -6029,8 +6637,12 @@ def ejecutar_cargue(
                     guardar_resultado(
                         ruta_reporte,
                         actividad,
-                        "OK",
-                        _observacion_guardado(resultado),
+                        "OMITIDO" if resultado.get("omitido") else "OK",
+                        (
+                            "El recurso ya estaba montado en PRIZMA."
+                            if resultado.get("omitido")
+                            else _observacion_guardado(resultado)
+                        ),
                         resultado["recurso"],
                     )
                 else:
@@ -6115,4 +6727,3 @@ def ejecutar_cargue(
                 navegador.close()
         except Exception:
             pass
-

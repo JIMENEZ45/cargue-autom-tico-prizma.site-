@@ -29,13 +29,12 @@ APP_NAME = "Cargue Prizma Pro"
 NAV_ITEMS = (
     ("inicio", "Inicio", "/", "inicio"),
     ("test", "Test", "/tests", "test"),
+    ("auditor", "Auditor", "/auditor", "escudo"),
     ("moodle", "Cargue Moodle", "/moodle", "moodle"),
     ("cargue", "Cargue actual", "/cargue-actual", "subir"),
     ("cursos", "Cursos", "/cursos", "libro"),
     ("historial", "Historial", "/historial", "historial"),
     ("reportes", "Reportes", "/reportes", "reportes"),
-    ("clave", "Mi contraseña", "/cambiar-clave", "clave"),
-    ("salir", "Salir", "/salir", "salir"),
 )
 
 # Se ejecuta antes de pintar para que el tema oscuro no parpadee.
@@ -214,10 +213,8 @@ def _user_menu():
         + icon("chevron") + "</button>"
         '<div class="menu-desplegable" role="menu" data-menu-lista hidden>'
         '<div class="menu-cabecera"><strong>' + _e(nombre) + "</strong><span>" + _e(usuario) + "</span></div>"
-        '<a role="menuitem" href="/cambiar-clave">' + icon("clave") + "Mi contraseña</a>"
         + google
-        + '<a role="menuitem" href="/salir">' + icon("salir") + "Salir</a>"
-        "</div></div>"
+        + "</div></div>"
     )
 
 

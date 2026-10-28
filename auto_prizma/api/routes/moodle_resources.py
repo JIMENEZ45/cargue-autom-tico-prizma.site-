@@ -10,8 +10,10 @@ from auto_prizma.core.application import app
 from auto_prizma.services.auth import _usuario_actual
 from auto_prizma.services.moodle_resources import (
     cancel_moodle_publish,
+    attach_manual_resource,
     create_moodle_preview,
     get_moodle_job,
+    MAX_MANUAL_RESOURCE_BYTES,
     pause_moodle_publish,
     public_moodle_status,
     resume_moodle_publish,
@@ -110,6 +112,32 @@ def moodle_job_status(job_id: str, request: Request):
     if not job:
         return JSONResponse({"error": "Vista previa no encontrada."}, status_code=404)
     return public_moodle_status(job)
+
+
+@app.post("/moodle/{job_id}/recurso-manual")
+async def moodle_attach_manual_resource(
+    job_id: str,
+    request: Request,
+    entry_key: str = Form(...),
+    resource_file: UploadFile = File(...),
+):
+    if not _request_is_local(request):
+        return JSONResponse({"error": "Disponible solo desde la instancia local."}, status_code=403)
+    job = get_moodle_job(job_id, _owner())
+    if not job:
+        return JSONResponse({"error": "Vista previa no encontrada."}, status_code=404)
+    try:
+        if job.get("status") in {"queued", "logging_in", "publishing", "paused"}:
+            raise ValueError("Espera a que termine la publicación antes de cambiar un archivo.")
+        content = await resource_file.read(MAX_MANUAL_RESOURCE_BYTES + 1)
+        if len(content) > MAX_MANUAL_RESOURCE_BYTES:
+            raise ValueError("El archivo supera el límite de 200 MB para una carga manual.")
+        attach_manual_resource(job, entry_key, resource_file.filename, content)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    except OSError:
+        return JSONResponse({"error": "No se pudo guardar el archivo seleccionado."}, status_code=500)
+    return JSONResponse({"ok": True, "message": "Archivo asociado a la fila."})
 
 
 _CONTROL_ACTIONS = {

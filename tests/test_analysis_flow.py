@@ -127,6 +127,7 @@ def test_analyze_file_mode_registers_job_and_saves_files(limpiar_trabajos):
     assert resultado["drive"]["modo"] == "archivo"
     assert resultado["drive"]["total_actividades"] == 3
     assert trabajo["id"] in respuesta.text
+    assert "Previsualización y títulos H5P" in respuesta.text
 
 
 @pytest.mark.parametrize(
@@ -208,4 +209,3 @@ def test_html_format_with_google_link_skips_drive_validation(monkeypatch, limpia
 
     assert resultado["drive"]["modo"] == "html"
     assert upload_jobs.TRABAJOS[trabajo_id]["recursos_drive_resueltos"] == {}
-
