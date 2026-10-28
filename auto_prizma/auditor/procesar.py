@@ -358,6 +358,30 @@ def titulos_visibles_h5p(ruta, tope=40):
     return salida
 
 
+def titulos_principales_h5p(ruta):
+    """Títulos raíz del contenido H5P; no confunde títulos de capítulos con portada."""
+    try:
+        with zipfile.ZipFile(ruta) as z:
+            nombre = next((n for n in z.namelist()
+                           if n.replace("\\", "/").lower()
+                           .endswith("content/content.json")), None)
+            if not nombre:
+                return []
+            datos = json.loads(z.read(nombre).decode("utf-8", "replace"))
+    except Exception:  # noqa: BLE001
+        return []
+    if not isinstance(datos, dict):
+        return []
+    titulos = []
+    titulo = datos.get("title")
+    metadata = datos.get("metadata")
+    metadata_titulo = metadata.get("title") if isinstance(metadata, dict) else ""
+    for valor in (titulo, metadata_titulo):
+        if isinstance(valor, str) and valor.strip() and valor.strip() not in titulos:
+            titulos.append(valor.strip())
+    return titulos
+
+
 def aviso_titulo_envuelto(archivo, clave_titulo):
     """Frase de ayuda cuando el título del paquete (h5p.json) no calza:
 

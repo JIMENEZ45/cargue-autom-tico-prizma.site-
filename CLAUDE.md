@@ -34,9 +34,7 @@ core/config.py     = toda la configuración; core/application.py = instancia Fas
 - Cada cargue corre en su propio hilo con su propio Chromium; máximo 2 simultáneos.
 - **Interfaz**: todas las páginas se arman con el marco común `web/layout.py` (`render_page`; el login con `render_public_page`): menú lateral con íconos, estado real del servicio, barra superior con tema claro/oscuro y menú de usuario, y aviso de ambiente de pruebas. El aspecto común vive en `static/app.css` (colores como variables; el tema oscuro solo redefine variables) y el comportamiento común en `static/app.js` (tema, menús, copiar, diálogos, estado del servicio, tablas con búsqueda/filtros/orden/paginación). Cada página agrega solo su contenido y su CSS/JS propio.
 
-### Estado de la reorganización (2026-10-06)
-
-Se está reorganizando por fases. Hechas: **Fase 1–2** (auditoría y propuesta), **Fase 3** (estructura y nombres en inglés) y **Fase 4** (configuración centralizada) — commit `9b2c1e5`, sin cambios de comportamiento (mismas rutas, mismo HTML byte a byte). **Red de seguridad para la fase 7**: pruebas de caracterización del motor y de `drive_resource_policy` — commit `1e43574`. **Correcciones del motor** (campo Html vs H5P, diagnóstico de guardado, reintentos de sesión inicial, `import sys`) — commit `0e9ae40`. **Fase 5** (servicios): lógica de `/analizar`, `/iniciar`, `/cargue-actual`, `/cancelar`, `/estado` y reportes movida a `services/`; historial en `services/history.py`; escritura atómica única (`core/storage.py`); hora en `core/clock.py`; nombres de archivo en `domain/file_names.py`; código muerto eliminado; la contraseña PRIZMA ya no se retiene en el trabajo. Verificado: mismas rutas, mismo HTML y misma salida de `/analizar` que el código original. **Formato HTML para los recursos interactivos** (ver PRIZMA): probado en el ambiente de pruebas de PRIZMA e integrado en `main` el 2026-10-07. **Fase 8, parte visual** (aprobada por el usuario e integrada en `main` el 2026-10-07): marco HTML común (`web/layout.py` + `static/app.css`/`app.js`) en todas las páginas, rediseño de Inicio, Reportes y Detalle según las imágenes del usuario, estado real del servicio, validación del enlace de Sheets y eliminación de `_patch_main_nav`. Pendientes: **6** integraciones, **7** dividir `automation/prizma/engine.py` (~5800 líneas) y eliminar el monkeypatching del motor, **8** rutas (pasar a `APIRouter`), **9** más tests, **10** `docs/ARCHITECTURE.md`.
+El estado y los planes de trabajo se documentan en la tarea o issue correspondiente, no como una cronología duplicada aquí.
 
 ## Estructura del proyecto
 
@@ -65,8 +63,9 @@ auto-prizma-pro/
 │   │   ├── upload_jobs.py          # TRABAJOS, cola/hilos, test dentro del cargue y servicios de las rutas
 │   │   │                           # (create_analyzed_job, validate_access_and_enqueue, active_jobs, cancel_job, public_job_status)
 │   │   ├── history.py              # historial.json, nombres/rutas de reportes, consulta por usuario, lectura del CSV
+│   │   ├── h5p_preview.py           # Comparación previa de matriz, archivo ZIP y títulos internos H5P (reutiliza Auditor)
 │   │   ├── health.py               # Estado real: Chromium instalado y PRIZMA responde (con memoria de unos minutos)
-│   │   └── moodle_resources.py     # Vista previa, extracción ZIP, jobs y reportes Moodle
+│   │   └── moodle_resources.py     # Vista previa, extracción ZIP, comparación de títulos H5P, jobs y reportes Moodle
 │   ├── integrations/google/
 │   │   ├── oauth.py                # OAuth por usuario, tokens, descarga de Google Docs para tests
 │   │   └── drive.py                # Enlaces de columna G (Sheets API), listado de carpetas (Drive API),
@@ -85,7 +84,7 @@ auto-prizma-pro/
 │   │   ├── layout.py               # Marco común: render_page / render_public_page, menú, estado, tema, usuario
 │   │   ├── icons.py                # Íconos SVG (icon(nombre))
 │   │   ├── views.py                # Inicio (formulario de análisis) y revisión antes del cargue
-│   │   └── moodle_views.py         # /moodle: formulario, vista previa con selección por tipo/semana, progreso en vivo, reporte
+│   │   └── moodle_views.py         # /moodle: formulario, vista previa con comparación H5P y selección por tipo/semana, progreso y reporte
 │   └── evaluative_tests/           # Módulo de tests evaluativos
 │       ├── models.py, parser.py, validation.py, serializer.py
 │       ├── automation.py           # PrizmaTestAutomator (Playwright)
@@ -119,11 +118,11 @@ auto-prizma-pro/
 | `web/layout.py` | Marco de todas las páginas | `render_page(title, content, active=..., page_css=..., page_js=..., after_main=...)`; `NAV_ITEMS` define el menú; `status_pills()` los indicadores de Inicio; `environment_notice()` el aviso de ambiente de pruebas. |
 | `services/auth.py` | Sesión y usuarios | `USUARIO_ACTUAL` (contextvar) propaga el usuario a endpoints e hilos. |
 | `services/upload_jobs.py` | Ciclo de vida del cargue | `create_analyzed_job` → `validate_access_and_enqueue` → `_encolar_trabajo` → `_despachar_cargues_pendientes` → hilo → `ejecutar_cargue_con_historial` → `engine.ejecutar_cargue`. `cancel_job`, `public_job_status` y `active_jobs` para las rutas. |
-| `services/history.py` | Historial y reportes | `_agregar_registro_historial` (sin duplicar id), `_historial_del_usuario` (solo registros propios), `find_user_record`, `saved_report_path` (solo basename dentro de `RESULTADOS_DIR`). |
-| `services/moodle_resources.py` | Análisis y jobs Moodle | Lee matriz CSV/XLSX, extrae PDF/H5P de ZIP, aplica matching, mantiene jobs en memoria y genera reportes por usuario. |
+| `services/history.py` | Historial y reportes | `_agregar_registro_historial` (sin duplicar id), `_historial_del_usuario` (solo registros propios; purga a 15 días junto con CSV), `find_user_record`, `saved_report_path` (solo basename dentro de `RESULTADOS_DIR`). |
+| `services/moodle_resources.py` | Análisis y jobs Moodle | Lee matriz CSV/XLSX, extrae PDF/H5P de ZIP y aplica matching; para aprobar H5P exige título raíz de `content/content.json` igual (normalizado) al de la matriz; no usa títulos de capítulos como portada. Sin título raíz coincidente, requiere adjunto manual por fila. |
 | `automation/moodle/client.py` | Publicación Moodle | Chromium visible local con login manual, detección de duplicados y publicación PDF/H5P. Independiente del motor administrativo. |
 | `core/storage.py` | Archivos de datos | Toda escritura de JSON/texto en `data/` debe ser atómica con estas funciones. |
-| `automation/prizma/engine.py` | Todo lo que toca PRIZMA en el cargue | Funciones clave: `leer_actividades_excel`, `determinar_tipo_archivo`, `resolver_recurso`, `validar_credenciales_prizma`, `iniciar_sesion_prizma`, `procesar_actividad`, `ejecutar_cargue`, `guardar_resultado`, `EQUIVALENCIAS_PROGRAMAS`. |
+| `automation/prizma/engine.py` | Todo lo que toca PRIZMA en el cargue | Funciones clave: `leer_actividades_excel`, `determinar_tipo_archivo`, `resolver_recurso`, `validar_credenciales_prizma`, `iniciar_sesion_prizma`, `procesar_actividad`, `ejecutar_cargue`, `guardar_resultado`, `EQUIVALENCIAS_PROGRAMAS`. `verificar_actividades_prizma` inspecciona el archivo H5P adjunto en modo solo lectura y compara el título del paquete con el nombre de la matriz; no ejecuta el reproductor H5P. |
 | `evaluative_tests/` | Funcionalidad completa de tests | Se integra con el cargue vía `upload_jobs._ejecutar_test_en_cargue` y con historial/reportes vía `app.state`. |
 
 ## Convenciones
@@ -253,18 +252,7 @@ Reglas: no leer `os.environ` fuera de `config.py`; añadir constantes nuevas (UR
 
 ## Ejecución
 
-```powershell
-py -m venv .venv
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python -m playwright install chromium
-python scripts/manage_users.py crear
-python -m uvicorn main:app --reload
-```
-
-URL de desarrollo: `http://127.0.0.1:8000`. Para probar contra el ambiente de pruebas de PRIZMA: `$env:AUTO_PRIZMA_URL_PRIZMA = "https://admin.prizma.solutions"` antes de arrancar. `--reload` reinicia el proceso y **pierde los trabajos en memoria**. Producción: `Dockerfile` (`uvicorn main:app --host 0.0.0.0 --port 8000`), desplegado en Railway.
+La instalación y los comandos para arrancar están en `README.md`. La URL local es `http://127.0.0.1:8000`; `--reload` reinicia el proceso y **pierde los trabajos en memoria**. Para probar PRIZMA, configura `AUTO_PRIZMA_URL_PRIZMA=https://admin.prizma.solutions` antes de iniciar. Producción usa el `Dockerfile` y se despliega en Railway.
 
 **Despliegue gratuito en Oracle Cloud Always Free** (decisión del usuario, 2026-10-20: no hay presupuesto para servidor; Vercel descartado porque no admite Chromium, procesos largos ni disco persistente). Guía: `docs/DEPLOY_ORACLE.md`. `deploy/oracle/docker-compose.yml` construye el mismo `Dockerfile` (sin modificarlo) y lo pone detrás de **Caddy** (HTTPS automático de Let's Encrypt para `APP_DOMAIN`, subdominio gratis de DuckDNS). Detalles: la app no publica puertos (solo Caddy 80/443); el `command` añade `--proxy-headers --forwarded-allow-ips *` para que el bloqueo de login (`request.client.host`) vea la IP real; `./data` se monta en `/app/data` con `AUTO_PRIZMA_DATA_DIR=/app/data` (cubre también `<raíz>/data/tokens` de los tests evaluativos); la configuración va en `deploy/oracle/.env` (ignorado por git; compose lo lee como `env_file`, la app sigue sin leer `.env`). OAuth funciona detrás del proxy porque `/google/callback` arma `authorization_response` con `GOOGLE_REDIRECT_URI`, no con la URL de la petición. Pendiente de validar en un servidor real (ARM64 `VM.Standard.A1.Flex`).
 
@@ -272,10 +260,10 @@ URL de desarrollo: `http://127.0.0.1:8000`. Para probar contra el ambiente de pr
 
 - Framework: **pytest** (incluido en `requirements.txt`). `tests/conftest.py` fija `AUTO_PRIZMA_DATA_DIR` en una carpeta temporal y crea el usuario `adminlocal`. PRIZMA y Playwright están simulados (`unittest.mock.patch`).
 
-```powershell
-python -m pytest -q                                   # todo (≈50 s, 340 pruebas al 2026-10-26)
-python -m pytest tests/test_test_parser.py -q         # un archivo
-python -m pytest tests/test_automation.py -k nombre   # una prueba
+```bash
+python -m pytest tests/ -q                          # suite completa
+python -m pytest tests/test_test_parser.py -q       # un archivo
+python -m pytest tests/test_automation.py -k nombre # pruebas por nombre
 ```
 
 - Los `patch("auto_prizma.evaluative_tests....")` usan rutas de módulo en texto: al mover/renombrar módulos hay que actualizarlas.

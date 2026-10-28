@@ -592,6 +592,7 @@ def marcar_verificacion(id_curso, resultados, usuario_app=None):
                 verificacion = str(entrada.get("verificacion") or "").strip()
                 item["verificacion"] = verificacion
                 item["verificado_en"] = ahora
+                item["verificacion_detalle"] = str(entrada.get("detalle") or "").strip()
 
                 if verificacion == "no_esta" and str(item.get("ok_en") or ""):
                     item["ok_en"] = ""

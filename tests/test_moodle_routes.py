@@ -62,3 +62,37 @@ def test_moodle_analysis_uploads_matrix_and_zip_then_shows_preview(tmp_path, mon
     job_id = response.headers["location"].rsplit("/", 1)[-1]
     assert moodle_resources.get_moodle_job(job_id, "adminlocal") is not None
     assert moodle_resources.get_moodle_job(job_id, "otro-usuario") is None
+
+
+def test_moodle_preview_accepts_manual_file_for_missing_row(tmp_path, monkeypatch):
+    monkeypatch.setattr("auto_prizma.api.routes.moodle_resources._request_is_local", lambda _request: True)
+    monkeypatch.setattr(moodle_resources, "UPLOADS_DIR", str(tmp_path / "uploads"))
+    matrix = (
+        "Semana correspondiente,Unidad,Nombre del recurso,Categoría,Tipo de recurso,Enlace\n"
+        "Semana 1,Unidad 1,Lectura que falta,OVI,PDF,TEXTO - Lectura que falta\n"
+    ).encode("utf-8")
+    response = _client().post(
+        "/moodle/analizar",
+        files={
+            "matriz_archivo": ("matriz.csv", matrix, "text/csv"),
+            "recursos_zip": ("recursos.zip", _resources_zip(), "application/zip"),
+        },
+        data={"course_url": "https://prizma.americana.edu.co/course/view.php?id=42"},
+        follow_redirects=False,
+    )
+    job_id = response.headers["location"].rsplit("/", 1)[-1]
+    job = moodle_resources.get_moodle_job(job_id, "adminlocal")
+    entry = job["entries"][0]
+    assert entry["status"] == "missing"
+
+    attached = _client().post(
+        f"/moodle/{job_id}/recurso-manual",
+        data={"entry_key": entry["key"]},
+        files={"resource_file": ("lectura.pdf", b"%PDF-manual", "application/pdf")},
+    )
+
+    assert attached.status_code == 200
+    assert attached.json()["ok"] is True
+    assert entry["status"] == "matched"
+    preview = _client().get(f"/moodle/{job_id}")
+    assert "lectura.pdf" in preview.text

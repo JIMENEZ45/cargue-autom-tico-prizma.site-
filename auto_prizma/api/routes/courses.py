@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse
 from auto_prizma.automation.prizma import engine as motor_prizma
 from auto_prizma.api.routes.uploads import _pagina_progreso
 from auto_prizma.core.application import app
-from auto_prizma.core.config import RESULTADOS_DIR, TEMP_DIR, ZONA_HORARIA_COLOMBIA
+from auto_prizma.core.config import RESULTADOS_DIR, TEMP_DIR, UPLOADS_DIR, ZONA_HORARIA_COLOMBIA
 from auto_prizma.services.auth import USUARIO_ACTUAL, _usuario_actual
 from auto_prizma.services.course_state import (
     _clave_actividad,
@@ -33,7 +33,7 @@ from auto_prizma.services.course_state import (
     total_faltantes,
 )
 from auto_prizma.services.error_messages import mensaje_error
-from auto_prizma.services.history import _nombre_reporte
+from auto_prizma.services.history import _nombre_reporte, find_user_record
 from auto_prizma.services.upload_jobs import TRABAJOS, crear_trabajo_manual
 from auto_prizma.web.icons import icon
 from auto_prizma.web.layout import render_page
@@ -102,10 +102,12 @@ def _verificacion_html(item):
         texto = "sin confirmar"
         clase = ""
 
+    detalle = str(item.get("verificacion_detalle") or "").strip()
     return (
         '<small class="verificado' + clase + '">· verificado'
         + (" " + fecha if fecha else "")
         + ": " + texto + "</small>"
+        + ('<small class="verificacion-detalle">' + _e(detalle) + "</small>" if detalle else "")
     )
 
 
@@ -251,7 +253,7 @@ def _formularios_manuales():
         'action="/cursos/reintentar" enctype="multipart/form-data">'
         "<h3>Reintentar: <span id=\"reintento-nombre\"></span></h3>"
         '<p class="form-pista">Adjunta el recurso de esa actividad: se sube solo a '
-        "esa, sin tocar las demás.</p>"
+        'esa, sin tocar las demás.</p>'
         '<input type="hidden" name="id_curso" id="reintento-curso">'
         '<input type="hidden" name="clave" id="reintento-clave">'
         '<div class="form-fila">'
@@ -318,6 +320,7 @@ _CSS_CURSOS = r"""
 .col-accion { width: 140px; }
 .verificado { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
 .verificado.ok { color: var(--exito, #2e9e5b); }
+.verificacion-detalle { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; white-space: normal; }
 .curso-estado-acciones { margin-top: 16px; display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 
 /* Formularios de reintento y verificacion (abiertos por boton) */
@@ -427,6 +430,7 @@ def _ejecutar_reintento(
     carpeta_temp,
     usuario_prizma,
     contrasena_prizma,
+    indice_recursos=None,
 ):
     """Hilo: sube el recurso elegido a mano y deja el resultado en el trabajo."""
     trabajo = TRABAJOS.get(trabajo_id)
@@ -437,14 +441,16 @@ def _ejecutar_reintento(
 
         testigo = USUARIO_ACTUAL.set(str(trabajo.get("usuario_app") or ""))
 
-        resultado = motor_prizma.subir_actividad_manual(
-            usuario_prizma,
-            contrasena_prizma,
-            actividad,
-            ruta_archivo,
-            carpeta_temp,
-            trabajo,
-        ) or {}
+        args = (
+            usuario_prizma, contrasena_prizma, actividad,
+            ruta_archivo, carpeta_temp, trabajo,
+        )
+        if indice_recursos is None:
+            resultado = motor_prizma.subir_actividad_manual(*args) or {}
+        else:
+            resultado = motor_prizma.subir_actividad_manual(
+                *args, indice_recursos=indice_recursos
+            ) or {}
 
         error = str(resultado.get("error") or "")
 
@@ -532,6 +538,7 @@ def reintentar_actividad(
     clave: str = Form(""),
     usuario_prizma: str = Form(""),
     contrasena_prizma: str = Form(""),
+    registro_id: str = Form(""),
     recurso: UploadFile = File(None),
 ):
     usuario_prizma = str(usuario_prizma or "").strip()
@@ -547,10 +554,25 @@ def reintentar_actividad(
         contenido = recurso.file.read() if recurso is not None else b""
     except Exception:
         contenido = b""
-    if not contenido:
+    indice_recursos = None
+    if not contenido and registro_id:
+        registro = find_user_record(str(registro_id).strip())
+        ruta_zip = os.path.join(UPLOADS_DIR, str(registro_id).strip(), "recursos.zip")
+        if registro and os.path.isfile(ruta_zip):
+            try:
+                indice_recursos = motor_prizma.crear_indice_recursos(ruta_zip)
+            except Exception:
+                indice_recursos = None
+        if indice_recursos is None:
+            return _pagina_error(
+                "No está disponible el ZIP original",
+                "Adjunta el archivo del recurso para reintentar esta actividad.",
+                volver="/reportes",
+            )
+    elif not contenido:
         return _pagina_error(
             "Falta el recurso",
-            "Elige el archivo del recurso de la actividad que quieres reintentar.",
+            "Elige el archivo del recurso. Para reintentar desde el ZIP original, abre el reporte del cargue.",
         )
 
     actividad, error = actividad_para_reintento(
@@ -587,14 +609,16 @@ def reintentar_actividad(
             str(actividad.get("programa") or ""),
         )
 
-        nombre_archivo = (
-            os.path.basename(str(recurso.filename or "")).strip() or "recurso"
-        )
         carpeta_temp = os.path.join(TEMP_DIR, trabajo_id)
         os.makedirs(carpeta_temp, exist_ok=True)
-        ruta_archivo = os.path.join(carpeta_temp, nombre_archivo)
-        with open(ruta_archivo, "wb") as fh:
-            fh.write(contenido)
+        ruta_archivo = None
+        if contenido:
+            nombre_archivo = (
+                os.path.basename(str(recurso.filename or "")).strip() or "recurso"
+            )
+            ruta_archivo = os.path.join(carpeta_temp, nombre_archivo)
+            with open(ruta_archivo, "wb") as fh:
+                fh.write(contenido)
 
         pagina = _pagina_manual(
             trabajo,
@@ -611,6 +635,7 @@ def reintentar_actividad(
                 carpeta_temp,
                 usuario_prizma,
                 contrasena_prizma,
+                indice_recursos,
             ),
         )
 

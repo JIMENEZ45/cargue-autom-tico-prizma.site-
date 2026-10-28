@@ -17,7 +17,7 @@ _CSS_MOODLE = """
 .moodle-weeks{display:grid;gap:10px}.moodle-weeks-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:8px 20px;margin-top:6px}.moodle-weeks-head h2{margin:0}.moodle-weeks-head .moodle-toolbar{margin:0}.moodle-check-inline{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--texto-2);white-space:nowrap}.moodle-check-inline input{margin:0;width:auto;min-height:0;accent-color:var(--acento)}
 .moodle-week{padding:0;overflow:hidden}.moodle-week>summary{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;padding:14px 20px;cursor:pointer;list-style:none}.moodle-week>summary::-webkit-details-marker{display:none}.moodle-week>summary::before{content:"▸";color:var(--muted);transition:transform .15s}.moodle-week[open]>summary::before{transform:rotate(90deg)}.moodle-week>summary strong{font-size:16px}.moodle-week-count{color:var(--muted);font-size:13px}.moodle-week-body{display:grid;gap:12px;padding:0 20px 18px}
 .moodle-block{border:1px solid var(--borde);border-radius:12px;overflow:hidden}.moodle-block h4{margin:0;padding:9px 14px;background:var(--acento-suave);color:var(--acento-texto);font-size:13px}.moodle-block.manual h4{background:var(--panel-2);color:var(--texto-2)}.moodle-block.sin-uso{border-style:dashed}.moodle-block.sin-uso h4{background:var(--panel-2);color:var(--muted);text-decoration:line-through}.moodle-block.sin-uso p{margin:0;padding:10px 14px;color:var(--muted);font-size:12px}.moodle-block ul{margin:0;padding:0;list-style:none}
-.moodle-item{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:12px;align-items:start;padding:10px 14px;border-top:1px solid var(--borde)}.moodle-item:first-child{border-top:0}.moodle-item input{margin:3px 0 0;accent-color:var(--acento)}.moodle-item.problema{background:var(--ambar-suave)}.moodle-item-text strong{display:block;font-size:14px;line-height:1.35}.moodle-item-text small{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}.moodle-nocheck{color:var(--muted);text-align:center}.moodle-why{color:var(--texto-2)}
+.moodle-item{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:12px;align-items:start;padding:10px 14px;border-top:1px solid var(--borde)}.moodle-item:first-child{border-top:0}.moodle-item input{margin:3px 0 0;accent-color:var(--acento)}.moodle-item.problema{background:var(--ambar-suave)}.moodle-item-text strong{display:block;font-size:14px;line-height:1.35}.moodle-item-text small{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px;color:var(--muted);font-size:12px;overflow-wrap:anywhere}.moodle-h5p-check{display:grid;gap:4px;margin-top:7px;color:var(--texto-2);font-size:12px;overflow-wrap:anywhere}.moodle-h5p-check>span{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.moodle-h5p-check .badge{font-size:10px}.moodle-manual-upload{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--texto-2)}.moodle-manual-upload input{display:inline-block!important;width:auto;max-width:230px;min-height:0!important;font-size:12px}.moodle-manual-upload .boton{padding:6px 10px;font-size:12px}.moodle-nocheck{color:var(--muted);text-align:center}.moodle-why{color:var(--texto-2)}
 .moodle-labels-option{display:grid;gap:8px;padding:14px;border:1px solid var(--borde);border-radius:12px;background:var(--panel-2)}.moodle-check{display:flex;gap:10px;align-items:flex-start;cursor:pointer}.moodle-check input{margin-top:3px;accent-color:var(--acento)}.moodle-check strong{display:block;font-size:14px}.moodle-check small{display:block;color:var(--muted);font-size:12px;margin-top:2px}.moodle-labels-option summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--acento-texto)}.moodle-labels-option ul{margin:8px 0;padding-left:18px;font-size:13px}
 .moodle-counts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.moodle-count{display:grid;gap:2px;padding:14px 16px;border:1px solid var(--borde);border-radius:14px;background:var(--panel);text-align:left;font:inherit;color:inherit;cursor:pointer}.moodle-count:hover,.moodle-count[aria-pressed=true]{border-color:var(--acento)}.moodle-count[aria-pressed=true]{box-shadow:0 0 0 2px var(--acento-suave)}.moodle-count strong{font-size:23px;color:var(--texto)}.moodle-count span{color:var(--texto-2);font-size:13px;font-weight:700}.moodle-count small{color:var(--muted);font-size:12px}.moodle-count[disabled]{cursor:default}
 .moodle-select{display:grid;gap:14px}.moodle-select-group{display:grid;gap:8px}.moodle-select-group>span{font-weight:700;color:var(--texto-2);font-size:13px}.moodle-chips{display:flex;flex-wrap:wrap;gap:8px}.moodle-chip{display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid var(--borde-2);border-radius:999px;background:var(--panel);font-size:13px;font-weight:600;color:var(--texto);cursor:pointer;user-select:none}.moodle-chip:has(input:checked){border-color:var(--acento);background:var(--acento-suave);color:var(--acento-texto)}.moodle-chip input{margin:0;accent-color:var(--acento)}.moodle-chip small{color:var(--muted);font-weight:600}.moodle-chip.disabled{opacity:.55;cursor:not-allowed}
@@ -42,6 +42,7 @@ _TEXT_STATUS = {
     "ambiguous": ("Varios archivos posibles", "badge-rojo", "Más de un archivo del ZIP coincide con el nombre. Deja solo uno para que no se publique el equivocado."),
     "extension-mismatch": ("Tipo de archivo distinto", "badge-ambar", "Se encontró el archivo, pero con otra extensión (por ejemplo, un PDF donde la matriz pide un H5P)."),
     "unsupported": ("Se publica a mano", "badge-gris", "Este tipo de recurso no tiene un destino automático en Moodle (por ejemplo, videos a cámara). Súbelo manualmente."),
+    "title-review": ("Título H5P por revisar", "badge-ambar", "No se verificó una coincidencia exacta del título dentro del contenido. Adjunta manualmente el archivo correcto para habilitar esta fila."),
 }
 
 # Resultado de cada recurso tras publicar: (badge, qué significa y qué hacer).
@@ -120,7 +121,7 @@ def _upload_form(error=""):
     )
 
 
-_PROBLEM_STATUSES = {"missing", "ambiguous", "extension-mismatch"}
+_PROBLEM_STATUSES = {"missing", "ambiguous", "extension-mismatch", "title-review"}
 
 
 def _ordered_entries(job):
@@ -191,13 +192,15 @@ def _row_detail(entry):
     extension = destination.get("extension") or ""
     candidates = [os.path.basename(item) for item in entry.get("candidates") or []]
     if status == "matched":
-        return _e(os.path.basename(entry.get("path") or ""))
+        return _e(entry.get("manual_filename") or os.path.basename(entry.get("path") or ""))
     if status == "missing":
         return '<span class="moodle-why">Ningún ' + _e(extension or "archivo") + ' del ZIP se llama «' + _e(entry.get("title")) + '»</span>'
     if status == "ambiguous":
         return '<span class="moodle-why">Coinciden ' + str(len(candidates)) + ' archivos: ' + _e(", ".join(candidates[:4])) + ('…' if len(candidates) > 4 else '') + '</span>'
     if status == "extension-mismatch":
         return '<span class="moodle-why">Se encontró ' + _e(", ".join(candidates[:2])) + ', pero este recurso necesita ' + _e(extension) + '</span>'
+    if status == "title-review":
+        return '<span class="moodle-why">' + _e((entry.get("h5p_preview") or {}).get("detail") or "El título del H5P necesita revisión.") + '</span>'
     if status == "unsupported":
         return '<span class="moodle-why">«' + _e(entry.get("resourceType")) + '» no tiene destino automático</span>'
     return "—"
@@ -220,12 +223,40 @@ def _item(entry, order, locked):
         check = '<span class="moodle-nocheck" title="Solo se pueden publicar los recursos listos">—</span>'
         badge = '<span class="badge ' + tone + '" title="' + _e(help_text) + '">' + _e(label) + '</span>'
     search = " ".join(str(entry.get(key) or "") for key in ("week", "title", "resourceType", "path"))
+    h5p_preview = entry.get("h5p_preview") or {}
+    h5p_markup = ""
+    if h5p_preview:
+        h5p_status = h5p_preview.get("status")
+        if h5p_status == "match":
+            preview_badge = '<span class="badge badge-verde">Título coincide</span>'
+        elif h5p_status == "no-cover":
+            preview_badge = '<span class="badge badge-ambar">Sin título verificable</span>'
+        else:
+            preview_badge = '<span class="badge badge-rojo">Título del contenido distinto</span>'
+        visible_titles = " · ".join(str(title) for title in h5p_preview.get("visible_titles") or [])
+        h5p_markup = (
+            '<span class="moodle-h5p-check">' + preview_badge
+            + '<span><strong>Título H5P:</strong> ' + _e(h5p_preview.get("package_title") or "Sin título interno")
+            + '</span><span>' + _e(h5p_preview.get("detail")) + '</span>'
+            + ('<span><strong>Títulos dentro del contenido:</strong> ' + _e(visible_titles) + '</span>' if visible_titles else '')
+            + '</span>'
+        )
+    manual_markup = ""
+    destination = entry.get("destination") or {}
+    if status != "matched" and destination.get("extension") in {".pdf", ".h5p"}:
+        extension = destination["extension"]
+        manual_markup = (
+            '<span class="moodle-manual-upload"><label>Adjuntar archivo para esta fila '
+            '<input type="file" accept="' + extension + '" data-manual-resource data-entry-key="'
+            + _e(entry.get("key")) + '"></label><button type="button" class="boton secundario pequeno" data-manual-attach>'
+            'Usar este archivo</button></span>'
+        )
     return (
         '<li class="moodle-item' + (' problema' if status in _PROBLEM_STATUSES else '') + '" data-moodle-row data-status="' + _e(status)
         + '" data-search="' + _e(search.lower()) + '">' + check
         + '<div class="moodle-item-text"><strong>' + _e(entry.get("title")) + '</strong>'
         + '<small><span class="badge ' + _KIND_BADGES.get(kind, "badge-gris") + '">' + _e(_KIND_LABELS.get(kind, kind)) + '</span> '
-        + _row_detail(entry) + '</small></div>' + badge + '</li>'
+        + _row_detail(entry) + '</small>' + h5p_markup + manual_markup + '</div>' + badge + '</li>'
     )
 
 
@@ -605,6 +636,14 @@ _JS_MOODLE = """
   document.querySelectorAll('[data-sel-kind],[data-sel-week]').forEach(function(input){input.addEventListener('change',applyGroups);});
   document.querySelectorAll('[data-moodle-select]').forEach(function(button){button.addEventListener('click',function(){var on=button.dataset.moodleSelect==='all';document.querySelectorAll('[data-sel-kind],[data-sel-week]').forEach(function(input){if(!input.disabled)input.checked=on;});applyGroups();});});
   boxes().forEach(function(box){box.addEventListener('change',refreshCount);});
+  document.querySelectorAll('[data-manual-attach]').forEach(function(button){button.addEventListener('click',async function(){
+    var row=button.closest('[data-moodle-row]');var input=row&&row.querySelector('[data-manual-resource]');
+    if(!input||!input.files||!input.files[0]){window.alert('Selecciona primero un archivo para esta fila.');return;}
+    var data=new FormData();data.append('entry_key',input.dataset.entryKey);data.append('resource_file',input.files[0]);button.disabled=true;
+    try{var response=await fetch(form.action.replace('/publicar','/recurso-manual'),{method:'POST',body:data,headers:{'Accept':'application/json'}});var result=await response.json();if(!response.ok){window.alert(result.error||'No se pudo adjuntar el archivo.');}else{window.location.reload();}}
+    catch(_){window.alert('No se pudo contactar con Auto Prizma.');}
+    finally{button.disabled=false;}
+  });});
   if(form){form.addEventListener('submit',function(event){
     var mode=event.submitter&&event.submitter.value;var count=boxes().filter(function(box){return box.checked;}).length;
     if(!count){event.preventDefault();window.alert('Marca al menos un recurso listo para publicar.');return;}

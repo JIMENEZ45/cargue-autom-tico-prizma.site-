@@ -63,6 +63,14 @@ flowchart LR
 5. El cargue entra en la cola; un navegador Chromium sin interfaz entra a PRIZMA y carga cada actividad.
 6. Al terminar se guarda el reporte y queda registrado en el historial.
 
+Antes de iniciar, la revisión muestra una comparación de cada H5P disponible:
+nombre en la matriz, archivo emparejado del ZIP, título del paquete y títulos
+identificados dentro del contenido. Después del cargue, **Cursos → Verificar**
+revisa la actividad en PRIZMA y, para H5P, descarga temporalmente el archivo
+adjunto para comparar su título interno con el de la matriz. La inspección no
+ejecuta el reproductor interactivo H5P; la vista visual interactiva sigue siendo
+la de PRIZMA.
+
 ---
 
 ## Tecnologías
@@ -373,6 +381,8 @@ El apartado **Cargue Moodle** (`/moodle`) publica recursos PDF y H5P directament
    - Un resumen (listos para publicar, por corregir, se suben a mano, semanas) y la lista **«Necesitan atención»** con lo que falta corregir en el ZIP o la matriz y por qué.
    - **«Recursos por semana»**, organizada como el curso: cada semana con sus bloques *Recurso educativo digital*, *Recurso educativo audiovisual* y *Reto Evaluativo*. Los títulos de tema de la matriz se ignoran (no son recursos).
    - Cada archivo se empareja por nombre con el «Nombre del recurso»; se quitan prefijos como `H5P -`, `PDF -` o `Infografía -`. Si varios archivos coinciden, la fila no se publica.
+   - En cada H5P emparejado, la vista previa compara la matriz con el título principal en la raíz de `content/content.json`; solo se aprueba automáticamente si coincide exactamente tras ignorar mayúsculas, tildes y signos. Los títulos de capítulos no cuentan como portada. Si no hay título principal verificable, aparece **Sin título verificable**; si es distinto, aparece **Título del contenido distinto**. En ambos casos la fila queda pendiente y no se publica con el archivo del ZIP.
+   - En una fila con archivo faltante, ambiguo, de extensión incorrecta o H5P por revisar, puedes adjuntar manualmente un PDF/H5P para esa fila (máximo 200 MB y de la extensión requerida). La selección manual habilita la fila; el aviso del H5P sigue visible para confirmar que elegiste el archivo correcto.
 4. En **«¿Qué quieres publicar?»** marca tipos de recurso (H5P, infografía, video avatar, PDF, reto) y semanas, o filas sueltas. Usa **Probar con 1 recurso** primero y luego **Publicar seleccionados**.
 5. Se abre Chromium: inicia sesión a mano (se espera hasta 2 minutos). La app activa el **Modo de edición**, publica **desde la semana 1** y, antes de cada recurso, comprueba si ya está en la semana para **no duplicarlo**. La pantalla muestra el avance en vivo y permite **Pausar**, **Reanudar** y **Cancelar** (actúan entre recursos, nunca a mitad de una subida).
 6. Opcional: marca **«Al terminar, borrar las etiquetas que la matriz no usa»**. Al final, en cada semana publicada, borra las etiquetas de bloque sin recursos en la matriz (⋮ → Borrar → confirmar). Nunca en la prueba de 1 recurso y nunca recursos, solo etiquetas. No se puede deshacer.
@@ -436,6 +446,15 @@ Todo lo que debe sobrevivir a un reinicio se guarda en `AUTO_PRIZMA_DATA_DIR` (p
 | `reportes/` | Reportes CSV de cada cargue |
 | `reportes/moodle/` | Reportes JSON/CSV de los cargues Moodle |
 | `moodle_profiles/` | Perfil local de Chromium para Moodle, separado por usuario |
+
+El historial de cargues y sus CSV locales se conservan por 15 días. La limpieza
+se ejecuta al consultar el historial/reportes o al registrar un nuevo cargue;
+el estado acumulado de `/cursos` se conserva aparte.
+
+En el detalle de un reporte, las filas con error permiten reintentar esa
+actividad: se puede reutilizar el ZIP original del cargue o adjuntar un archivo
+de reemplazo. En un cargue automático repetido, si PRIZMA ya muestra montado el
+mismo archivo, esa actividad se registra como omitida en vez de volver a subirlo.
 
 Las carpetas `uploads/` y `temp/` guardan archivos de trabajo temporales.
 

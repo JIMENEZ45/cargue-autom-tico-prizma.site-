@@ -16,6 +16,7 @@ import shutil
 import traceback
 import time
 import threading
+import tempfile
 import html as html_lib
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -39,6 +40,7 @@ from auto_prizma.core.config import (  # noqa: E402
 )
 from auto_prizma.automation.prizma.html_field import (  # noqa: E402
     NOMBRE_ARCHIVO_DESCONOCIDO,
+    XPATH_TARJETA_ARCHIVO_RECURSO,
     XPATH_SECCION_RECURSO,
     archivo_en_recurso,
     es_campo_de_texto as _es_campo_de_texto,
@@ -5113,6 +5115,30 @@ def procesar_actividad(
                 nombre_recurso,
         }
 
+    # En un cargue automático repetido, no volver a subir el mismo recurso
+    # cuando PRIZMA ya muestra ese archivo en la actividad. Un reintento manual
+    # con archivo explícito sí debe respetar la intención de reemplazarlo.
+    recurso_ya_montado = (
+        not recurso_manual and archivo_visible(pagina, nombre_recurso)
+    )
+    if not recurso_manual and es_html:
+        contenido_esperado, error_lectura = leer_archivo_html(ruta_recurso)
+        editor_html = _localizar_editor_html(pagina)
+        if not error_lectura and editor_html is not None:
+            recurso_ya_montado = (
+                normalizar_saltos(_texto_editor_html(editor_html))
+                == normalizar_saltos(contenido_esperado)
+            )
+
+    if recurso_ya_montado:
+        print("Recurso ya montado; se omite:", nombre_recurso)
+        cancelar_edicion_segura(pagina)
+        return {
+            "ok": True,
+            "omitido": True,
+            "recurso": nombre_recurso,
+        }
+
     # 6. PREPARAR CAMPOS SEGÚN CATEGORÍA
 
     if actividad[
@@ -5880,13 +5906,15 @@ def subir_actividad_manual(
     ruta_archivo,
     carpeta_temp,
     estado,
+    indice_recursos=None,
 ):
     """Sube UN recurso (archivo entregado por el usuario) a UNA actividad.
 
     Mismo camino que el cargue completo pero para una sola actividad: login,
     listado, categoria, edicion y guardado, con un reintento en sesion limpia
     si el fallo es estructural. El archivo se usa tal cual (recurso_manual),
-    sin buscar en Drive ni en el ZIP.
+    sin buscar en Drive ni en el ZIP. Si no se entrega ruta_archivo, resuelve
+    el recurso desde indice_recursos (ZIP original).
 
     Returns:
         dict con {"ok", "error", "recurso"} como procesar_actividad.
@@ -6007,13 +6035,13 @@ def subir_actividad_manual(
                     resultado = procesar_actividad(
                         pagina,
                         actividad,
-                        [],
+                        indice_recursos or [],
                         carpeta_temp,
                         respuestas,
                         captura,
                         [actividad],
                         estado_navegacion,
-                        recurso_manual=ruta_archivo,
+                        recurso_manual=ruta_archivo or None,
                     )
                 except Exception as error:
                     traceback.print_exc()
@@ -6210,6 +6238,10 @@ def verificar_actividades_prizma(
                         else:
                             entrada["verificacion"] = "existe"
                             entrada["detalle"] = "Aparece en PRIZMA."
+                            if str(actividad.get("tipo_archivo") or "").upper() == "H5P":
+                                entrada["detalle"] += " " + _inspeccionar_h5p_montado(
+                                    pagina, fila, actividad
+                                )
                 except Exception:
                     traceback.print_exc()
                     entrada["verificacion"] = "no_se_pudo"
@@ -6242,6 +6274,78 @@ def verificar_actividades_prizma(
         "error": "",
         "resultados": resultados,
     }
+
+
+def _inspeccionar_h5p_montado(pagina, fila, actividad):
+    """Lee en modo solo lectura el H5P adjunto y contrasta su título con la matriz."""
+    ruta_temporal = ""
+    if not abrir_edicion(pagina, fila):
+        return "No se pudo abrir la actividad para revisar el H5P adjunto."
+    try:
+        nombre_archivo = archivo_en_recurso(pagina)
+        if not nombre_archivo:
+            return "No se detectó un archivo adjunto en el campo Recurso."
+
+        tarjeta = pagina.locator(XPATH_TARJETA_ARCHIVO_RECURSO)
+        botones = tarjeta.locator("button")
+        if botones.count() < 1:
+            return "Se encontró " + nombre_archivo + ", pero no su botón de vista previa/descarga."
+
+        descriptor, ruta_temporal = tempfile.mkstemp(suffix=".h5p", prefix="prizma_h5p_")
+        os.close(descriptor)
+        try:
+            with pagina.expect_download(timeout=12000) as descarga_info:
+                botones.first.click(timeout=5000)
+            descarga_info.value.save_as(ruta_temporal)
+        except Exception:
+            return "Se encontró " + nombre_archivo + ", pero PRIZMA no permitió leer su H5P para comparar el título."
+
+        # Se llama a la misma lógica de títulos usada por la pestaña Auditor.
+        from auto_prizma.auditor.procesar import clave as clave_auditor
+        from auto_prizma.auditor.procesar import leer_titulo_h5p, titulos_visibles_h5p
+
+        titulo, error = leer_titulo_h5p(ruta_temporal)
+        if error:
+            return "Archivo adjunto: " + nombre_archivo + "; H5P ilegible: " + str(error) + "."
+        titulo = str(titulo or "").strip()
+        esperado = str(actividad.get("nombre") or "").strip()
+        if titulo and clave_auditor(titulo) == clave_auditor(esperado):
+            return (
+                "Archivo adjunto: " + nombre_archivo
+                + '; título H5P coincide con la matriz ("' + titulo + '").'
+            )
+
+        visibles = titulos_visibles_h5p(ruta_temporal)
+        coincide_contenido = next(
+            (t for t in visibles if clave_auditor(t) == clave_auditor(esperado)),
+            "",
+        )
+        if coincide_contenido:
+            return (
+                "Archivo adjunto: " + nombre_archivo
+                + '; el título del paquete es "' + (titulo or "sin título")
+                + '", pero el contenido sí muestra el título de la matriz: "'
+                + coincide_contenido + '".'
+            )
+        visible = " · ".join(visibles[:3])
+        return (
+            "Archivo adjunto: " + nombre_archivo
+            + '; REVISAR: título del paquete "' + (titulo or "sin título")
+            + '" no coincide con matriz "' + esperado + '"'
+            + ("; títulos visibles del contenido: " + visible + "." if visible else ".")
+        )
+    except Exception as error:
+        print("No se pudo inspeccionar el H5P montado:", type(error).__name__)
+        return "Aparece en PRIZMA, pero no se pudo previsualizar el título interno del H5P."
+    finally:
+        try:
+            cancelar_edicion_segura(pagina)
+        finally:
+            if ruta_temporal:
+                try:
+                    os.remove(ruta_temporal)
+                except OSError:
+                    pass
 
 
 def ejecutar_cargue(
@@ -6533,8 +6637,12 @@ def ejecutar_cargue(
                     guardar_resultado(
                         ruta_reporte,
                         actividad,
-                        "OK",
-                        _observacion_guardado(resultado),
+                        "OMITIDO" if resultado.get("omitido") else "OK",
+                        (
+                            "El recurso ya estaba montado en PRIZMA."
+                            if resultado.get("omitido")
+                            else _observacion_guardado(resultado)
+                        ),
                         resultado["recurso"],
                     )
                 else:
@@ -6619,4 +6727,3 @@ def ejecutar_cargue(
                 navegador.close()
         except Exception:
             pass
-

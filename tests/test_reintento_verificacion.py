@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from auto_prizma.api.routes import courses
+from auto_prizma.automation.prizma import engine
 from auto_prizma.core.config import ESTADO_CURSOS_PATH, RESULTADOS_DIR
 from auto_prizma.core.storage import write_json_atomic
 from auto_prizma.services import course_state
@@ -137,6 +138,79 @@ def test_reintentar_sin_archivo_no_pasa_el_validador():
     )
     assert respuesta.status_code == 200
     assert "Falta el recurso" in respuesta.text
+
+
+def test_reporte_de_cargue_muestra_reintento_en_filas_con_error(tmp_path):
+    from auto_prizma.api.routes.reports import _pagina_reporte_html
+
+    ruta = tmp_path / "fallo.csv"
+    ruta.write_text(
+        "Fila Excel,Hoja,Programa,Curso,Actividad,Resultado,Observación\n"
+        "6,Curso A,Administración,Contabilidad I,Lectura guía,ERROR,ERROR_RECURSO_NO_ENCONTRADO\n",
+        encoding="utf-8-sig",
+    )
+    pagina = _pagina_reporte_html("Reporte", "", str(ruta), "/descargar")
+    assert "Reintentar recurso" in pagina
+    assert 'action="/cursos/reintentar"' in pagina
+
+
+def test_reporte_permita_reintentar_sin_adjunto_usando_zip_original(monkeypatch, tmp_path):
+    id_curso = _sembrar()
+    uploads = tmp_path / "uploads"
+    zip_job = uploads / "job-original" / "recursos.zip"
+    zip_job.parent.mkdir(parents=True)
+    zip_job.write_bytes(b"zip")
+    monkeypatch.setattr(courses, "UPLOADS_DIR", str(uploads))
+    monkeypatch.setattr(courses, "find_user_record", lambda _id: {"id": _id})
+    monkeypatch.setattr(courses.motor_prizma, "crear_indice_recursos", lambda _ruta: [{"nombre": "guia.pdf"}])
+    recibido = {}
+
+    def _falso_subir(*args, **kwargs):
+        recibido["indice"] = kwargs.get("indice_recursos")
+        return {"ok": True, "recurso": "guia.pdf"}
+
+    monkeypatch.setattr(courses.motor_prizma, "subir_actividad_manual", _falso_subir)
+    monkeypatch.setattr(courses, "_lanzar_hilo", _lanzar_sincrono)
+    respuesta = _cliente().post(
+        "/cursos/reintentar",
+        data={
+            "id_curso": id_curso,
+            "clave": "Curso A|6",
+            "registro_id": "job-original",
+            "usuario_prizma": "cesar",
+            "contrasena_prizma": "12345678",
+        },
+    )
+
+    assert respuesta.status_code == 200
+    assert "Reintento en progreso" in respuesta.text
+    assert recibido["indice"] == [{"nombre": "guia.pdf"}]
+
+
+def test_cargue_automatico_omite_recurso_que_ya_esta_montado(monkeypatch, tmp_path):
+    actividad = {
+        "nombre": "Lectura guía", "fila_excel": 6,
+        "categoria_prizma": "OVI", "tipo_archivo": "PDF",
+    }
+    monkeypatch.setattr(engine, "validar_carpeta_drive_para_actividad", lambda _: None)
+    monkeypatch.setattr(
+        engine, "resolver_recurso",
+        lambda *args: ({"ruta": str(tmp_path / "guia.pdf"), "nombre_original": "guia.pdf"}, None),
+    )
+    monkeypatch.setattr(engine, "asegurar_listado", lambda _: True)
+    monkeypatch.setattr(engine, "entrar_categoria", lambda *args: True)
+    monkeypatch.setattr(engine, "buscar_actividad_correcta", lambda *args: (object(), None))
+    monkeypatch.setattr(engine, "abrir_edicion", lambda *args: True)
+    monkeypatch.setattr(engine, "archivo_visible", lambda *args: True)
+    cancelado = []
+    monkeypatch.setattr(engine, "cancelar_edicion_segura", lambda _: cancelado.append(True))
+
+    resultado = engine.procesar_actividad(
+        object(), actividad, [], str(tmp_path), [], {"activa": False}, [actividad]
+    )
+
+    assert resultado == {"ok": True, "omitido": True, "recurso": "guia.pdf"}
+    assert cancelado
 
 
 def test_reintentar_actividad_no_registrada():
