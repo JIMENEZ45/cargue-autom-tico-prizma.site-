@@ -12,7 +12,7 @@ from auto_prizma.web.moodle_views import _item
 def _zip_bytes():
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
-        archive.writestr("semana/U1-T1-Origen y transformacion de la analitica.pdf", b"pdf")
+        archive.writestr("semana/U1-T1-Origen y transformacion de la analitica.pdf", b"%PDF-1.4 test")
         archive.writestr("otros/solo-notas.txt", b"no se indexa")
     return output.getvalue()
 

@@ -239,6 +239,16 @@ def create_moodle_preview(owner, matrix_filename, matrix_bytes, zip_filename, zi
             entry["h5p_preview"] = inspect_h5p_title(entry["path"], row["title"])
             if entry["h5p_preview"]["status"] != "match":
                 entry["status"] = "title-review"
+        if entry["status"] == "matched":
+            path = str(entry.get("path") or "")
+            if not path or not os.path.isfile(path) or os.path.getsize(path) == 0:
+                entry["status"] = "invalid-file"
+                entry["detail"] = "El archivo del recurso está vacío o no se puede leer."
+            elif path.lower().endswith(".pdf"):
+                with open(path, "rb") as stream:
+                    if not stream.read(5).startswith(b"%PDF-"):
+                        entry["status"] = "invalid-file"
+                        entry["detail"] = "El archivo no contiene una cabecera PDF válida."
         entries.append(entry)
     summary = {}
     for entry in entries:

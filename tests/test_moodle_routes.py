@@ -1,10 +1,13 @@
 import io
+import json
+import os
+import time
 import zipfile
 
 from fastapi.testclient import TestClient
 
 from main import app
-from auto_prizma.services.auth import _firmar_sesion
+from auto_prizma.services.auth import USUARIO_ACTUAL, _firmar_sesion
 from auto_prizma.services import moodle_resources
 
 
@@ -17,7 +20,7 @@ def _client():
 def _resources_zip():
     output = io.BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
-        archive.writestr("U1-T1-Recurso de analitica.pdf", b"pdf")
+        archive.writestr("U1-T1-Recurso de analitica.pdf", b"%PDF-1.4 test")
     return output.getvalue()
 
 
@@ -35,6 +38,47 @@ def test_moodle_home_uses_common_frame_and_local_only_gate(monkeypatch):
     denied = _client().get("/moodle")
     assert denied.status_code == 403
     assert "solo está disponible desde una instancia local" in denied.text
+
+
+def test_moodle_reports_are_private_and_expire_after_15_days(monkeypatch, tmp_path):
+    monkeypatch.setattr("auto_prizma.api.routes.moodle_resources._request_is_local", lambda _request: True)
+    monkeypatch.setattr("auto_prizma.api.routes.moodle_resources._moodle_report_dir", lambda: str(tmp_path))
+    old_stem = "moodle-cargue-20261001T120000Z-old"
+    new_stem = "moodle-cargue-20261028T120000Z-new"
+    for stem in (old_stem, new_stem):
+        (tmp_path / f"{stem}.json").write_text(json.dumps({"summary": {}}), encoding="utf-8")
+        (tmp_path / f"{stem}.csv").write_text("Resultado\nOK\n", encoding="utf-8")
+    old_time = time.time() - 16 * 24 * 60 * 60
+    for extension in (".json", ".csv"):
+        os.utime(tmp_path / (old_stem + extension), (old_time, old_time))
+
+    response = _client().get("/moodle-reportes")
+
+    assert response.status_code == 200
+    assert "1 reporte" in response.text
+    assert not (tmp_path / (old_stem + ".json")).exists()
+    assert not (tmp_path / (old_stem + ".csv")).exists()
+    assert (tmp_path / (new_stem + ".json")).exists()
+    assert (tmp_path / (new_stem + ".csv")).exists()
+
+
+def test_moodle_report_directories_are_separate_per_user(monkeypatch, tmp_path):
+    from auto_prizma.api.routes import moodle_resources as routes
+
+    monkeypatch.setattr(routes, "DATA_DIR", str(tmp_path))
+    token = USUARIO_ACTUAL.set("ana")
+    try:
+        ana_dir = routes._moodle_report_dir()
+    finally:
+        USUARIO_ACTUAL.reset(token)
+    token = USUARIO_ACTUAL.set("beto")
+    try:
+        beto_dir = routes._moodle_report_dir()
+    finally:
+        USUARIO_ACTUAL.reset(token)
+
+    assert ana_dir != beto_dir
+    assert str(tmp_path / "reportes" / "moodle") in ana_dir
 
 
 def test_moodle_analysis_uploads_matrix_and_zip_then_shows_preview(tmp_path, monkeypatch):

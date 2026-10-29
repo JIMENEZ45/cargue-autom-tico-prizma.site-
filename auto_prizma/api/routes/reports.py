@@ -440,7 +440,7 @@ def _pagina_reporte_html(titulo, subtitulo, ruta_csv, url_descarga, registro_id=
                 ) == "error"
             ):
                 valor = lambda indice: fila[indice] if indice < len(fila) else ""
-                id_curso = _clave_curso(valor(indice_curso), valor(indice_programa))
+                id_curso = _clave_curso(valor(indice_curso), valor(indice_programa), _usuario_actual())
                 clave = _clave_actividad(valor(indice_hoja), valor(indice_fila))
                 indice_actividad = _indice_columna(cabeceras, "Actividad")
                 nombre_actividad = valor(indice_actividad) if indice_actividad is not None else ""

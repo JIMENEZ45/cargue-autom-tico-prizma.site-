@@ -1,10 +1,10 @@
 # Instrucciones para agentes
 
-Este archivo contiene reglas de trabajo; no duplica la guía de instalación ni la arquitectura.
+Este archivo contiene reglas de trabajo; no duplica la guía de instalación, la guía funcional ni la arquitectura. La landing actual tiene tarjetas para Matrices, Cargue PRIZMA, Cargue Moodle y Automatizaciones; Control Tower y el acceso a PRIZMA administrativo son accesos directos, no tarjetas.
 
 ## Antes de cambiar
 
-- Lee `CLAUDE.md` para arquitectura, convenciones y límites entre capas. Consulta `README.md` para instalación y uso, y `GUIA_DETALLADA.md` para el comportamiento funcional.
+- Lee `CLAUDE.md` para arquitectura, convenciones y límites entre capas. Consulta `README.md` para instalación y uso breve, y `GUIA_DETALLADA.md` para el comportamiento funcional detallado; no copies su contenido aquí.
 - Revisa `git status`, la rama y los cambios locales antes de editar. No sobrescribas trabajo existente.
 - Sigue el flujo y los tests relacionados antes de modificar contratos o automatizaciones.
 

@@ -12,18 +12,21 @@ se subio alguna vez y un intento posterior fallo, sigue contando como subida
 """
 
 import csv
+from datetime import datetime, timedelta
+import hashlib
 import os
 import threading
 import unicodedata
 
-from auto_prizma.core.clock import _ahora_colombia_iso
-from auto_prizma.core.config import ESTADO_CURSOS_PATH, RESULTADOS_DIR
+from auto_prizma.core.clock import _ahora_colombia, _ahora_colombia_iso
+from auto_prizma.core.config import ESTADO_CURSOS_PATH, LOCAL_DATA_RETENTION_DAYS, RESULTADOS_DIR
 from auto_prizma.core.storage import read_json, write_json_atomic
-from auto_prizma.services.auth import _usuario_actual
+from auto_prizma.services.auth import _normalizar_usuario, _usuario_actual
 from auto_prizma.services.error_messages import extraer_codigo_error, mensaje_error
 
 
-ESTADO_LOCK = threading.Lock()
+ESTADO_LOCK = threading.RLock()
+DIAS_CONSERVAR_ESTADO_CURSOS = LOCAL_DATA_RETENTION_DAYS
 
 ESTADO_OK = "ok"
 ESTADO_ERROR = "error"
@@ -34,16 +37,42 @@ ESTADO_ERROR = "error"
 # ============================================================
 
 def _cargar_estado():
-    datos = read_json(ESTADO_CURSOS_PATH, {}, dict, errors=(Exception,))
-    return datos if isinstance(datos, dict) else {}
+    with ESTADO_LOCK:
+        datos = read_json(ESTADO_CURSOS_PATH, {}, dict, errors=(Exception,))
+        if not isinstance(datos, dict):
+            return {}
+
+        ahora = _ahora_colombia()
+        limite = ahora - timedelta(days=DIAS_CONSERVAR_ESTADO_CURSOS)
+        vigentes = {}
+        for clave, registro in datos.items():
+            try:
+                fecha = datetime.fromisoformat(str((registro or {}).get("actualizado") or ""))
+                if fecha.tzinfo is None:
+                    fecha = fecha.replace(tzinfo=ahora.tzinfo)
+            except (AttributeError, TypeError, ValueError):
+                # Los registros sin fecha legible se conservan; no se borran por error.
+                vigentes[clave] = registro
+                continue
+            if fecha >= limite:
+                vigentes[clave] = registro
+
+        if len(vigentes) != len(datos):
+            write_json_atomic(ESTADO_CURSOS_PATH, vigentes)
+        return vigentes
 
 
 def _guardar_estado(datos):
     write_json_atomic(ESTADO_CURSOS_PATH, datos)
 
 
-def _clave_curso(curso, programa):
-    return f"{str(programa or '').strip().casefold()}||{str(curso or '').strip().casefold()}"
+def _clave_curso(curso, programa, usuario_app=None):
+    base = f"{str(programa or '').strip().casefold()}||{str(curso or '').strip().casefold()}"
+    usuario = _normalizar_usuario(usuario_app)
+    if not usuario:
+        return base
+    propietario = hashlib.sha256(usuario.encode("utf-8")).hexdigest()[:20]
+    return base + "||usuario:" + propietario
 
 
 def _clave_actividad(hoja, fila):
@@ -97,6 +126,7 @@ def registrar_resultado_actividad(actividad, resultado, observacion, recurso="")
             return
 
         programa = str(actividad.get("programa") or "").strip()
+        usuario = _usuario_actual()
         hoja = str(actividad.get("hoja") or "").strip()
         fila = actividad.get("fila_excel")
         nombre = str(actividad.get("nombre") or "").strip()
@@ -105,7 +135,7 @@ def registrar_resultado_actividad(actividad, resultado, observacion, recurso="")
 
         with ESTADO_LOCK:
             datos = _cargar_estado()
-            id_curso = _clave_curso(curso, programa)
+            id_curso = _clave_curso(curso, programa, usuario)
 
             registro = datos.get(id_curso)
             if not isinstance(registro, dict):
@@ -160,7 +190,6 @@ def registrar_resultado_actividad(actividad, resultado, observacion, recurso="")
                 "tipo_archivo",
                 "tipo_recurso",
                 "enlace",
-                "url_recurso",
             ):
                 valor = actividad.get(campo)
                 if valor is not None and str(valor).strip():
@@ -185,7 +214,6 @@ def registrar_resultado_actividad(actividad, resultado, observacion, recurso="")
             registro["actualizado"] = ahora
             # El hilo de cargue fija USUARIO_ACTUAL; fuera de uno (tests,
             # registro manual) no se cambia el dueno existente.
-            usuario = _usuario_actual()
             if usuario:
                 registro["usuario_app"] = str(usuario)
 
@@ -208,7 +236,7 @@ def _cursos_del_usuario(datos, usuario_app=None):
     for registro in datos.values():
         if not isinstance(registro, dict):
             continue
-        if usuario_app and registro.get("usuario_app") not in (None, "", usuario_app):
+        if usuario_app is not None and _normalizar_usuario(registro.get("usuario_app")) != _normalizar_usuario(usuario_app):
             continue
         registros.append(registro)
     return registros
@@ -234,6 +262,9 @@ def resumen_cursos(usuario_app=None):
 
         salida.append(
             {
+                "id": _clave_curso(
+                    registro.get("curso"), registro.get("programa"), registro.get("usuario_app")
+                ),
                 "curso": str(registro.get("curso") or "Curso sin nombre"),
                 "programa": str(registro.get("programa") or ""),
                 "actualizado": str(registro.get("actualizado") or ""),
@@ -476,7 +507,6 @@ def _actividad_desde_item(registro, item):
         "tipo_recurso": str(item.get("tipo_recurso") or ""),
         "tipo_archivo": tipo_archivo,
         "enlace": str(item.get("enlace") or ""),
-        "url_recurso": str(item.get("url_recurso") or ""),
         "recurso": str(item.get("recurso") or ""),
     }, None
 
@@ -486,7 +516,7 @@ def _registro_del_curso(datos, id_curso, usuario_app):
     registro = datos.get(id_curso)
     if not isinstance(registro, dict):
         return None, "Ese curso no tiene actividades registradas."
-    if usuario_app and registro.get("usuario_app") not in (None, "", usuario_app):
+    if usuario_app is not None and _normalizar_usuario(registro.get("usuario_app")) != _normalizar_usuario(usuario_app):
         return None, "Ese curso no pertenece a tu usuario."
     return registro, None
 

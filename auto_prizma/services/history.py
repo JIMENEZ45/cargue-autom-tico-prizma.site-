@@ -11,13 +11,13 @@ import threading
 from datetime import datetime, timedelta
 
 from auto_prizma.core.clock import _ahora_colombia, _ahora_colombia_iso
-from auto_prizma.core.config import HISTORIAL_PATH, RESULTADOS_DIR
+from auto_prizma.core.config import HISTORIAL_PATH, LOCAL_DATA_RETENTION_DAYS, RESULTADOS_DIR
 from auto_prizma.core.storage import read_json, write_json_atomic
 from auto_prizma.services.auth import _normalizar_usuario, _usuario_actual
 
 
 HISTORIAL_LOCK = threading.Lock()
-DIAS_CONSERVAR_HISTORIAL = 15
+DIAS_CONSERVAR_HISTORIAL = LOCAL_DATA_RETENTION_DAYS
 
 
 # ============================================================

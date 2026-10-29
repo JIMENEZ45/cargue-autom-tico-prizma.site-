@@ -149,7 +149,7 @@ def _tarjeta_curso(resumen):
     faltantes = int(resumen.get("faltantes") or 0)
     pct = int(round(100 * subidas / total)) if total else 100
     actualizado = _fecha_corta(resumen.get("actualizado"))
-    id_curso = _clave_curso(resumen.get("curso"), resumen.get("programa"))
+    id_curso = resumen.get("id") or _clave_curso(resumen.get("curso"), resumen.get("programa"), _usuario_actual())
 
     if faltantes:
         cuerpo_faltantes = (
@@ -222,13 +222,14 @@ def _pagina_cursos(resumenes, pendientes):
     )
 
     if not resumenes:
-        return cabecera + (
-            '<section class="panel estado-vacio">'
-            + icon("info")
-            + "<div><h2>Todavía no hay cargues registrados</h2>"
-            "<p>Cuando hagas un cargue, aquí verás el avance por curso: qué actividades "
-            "ya quedaron y por qué falta cada una.</p>"
-            '<a class="boton" href="/">Ir a Inicio</a></div></section>'
+        return (
+            '<div class="cursos-page">' + cabecera
+            + '<section class="panel estado-vacio"><span class="icono-tile cursos-vacio-icon">'
+            + icon("info") + '</span><div class="estado-vacio-contenido">'
+            + '<span class="cursos-eyebrow">ESTADO DEL HISTORIAL</span>'
+            + '<h2>Todavía no hay cargues registrados</h2>'
+            + '<p>Cuando realices un cargue, aquí verás el avance de cada curso, las actividades completadas y lo que queda pendiente.</p>'
+            + '<a class="boton" href="/">Ir a Inicio</a></div></section></div>'
         )
 
     banner = ""
@@ -243,7 +244,7 @@ def _pagina_cursos(resumenes, pendientes):
 
     tarjetas = "".join(_tarjeta_curso(r) for r in resumenes)
 
-    return cabecera + banner + _formularios_manuales() + '<div class="lista-cursos">' + tarjetas + "</div>"
+    return '<div class="cursos-page">' + cabecera + banner + _formularios_manuales() + '<div class="lista-cursos">' + tarjetas + "</div></div>"
 
 
 def _formularios_manuales():
@@ -290,6 +291,8 @@ def _formularios_manuales():
 
 
 _CSS_CURSOS = r"""
+.cursos-page { display: grid; gap: 22px; color: var(--texto); }
+.cursos-page .aviso { background: var(--panel); color: var(--texto); border-color: var(--borde); }
 .lista-cursos { display: grid; gap: 18px; }
 .curso-estado-cabecera { display: flex; gap: 16px; align-items: center; }
 .curso-estado-titulo { min-width: 0; flex: 1; }
@@ -298,28 +301,32 @@ _CSS_CURSOS = r"""
 .curso-estado-progreso { text-align: right; }
 .curso-estado-progreso strong { display: block; font-size: 20px; }
 .curso-estado-progreso span { font-size: 12px; color: var(--muted); }
-.barra-progreso { height: 8px; border-radius: 6px; background: var(--panel-2, rgba(127,127,127,.18)); margin: 14px 0 6px; overflow: hidden; }
-.barra-progreso span { display: block; height: 100%; background: var(--exito, #2e9e5b); border-radius: 6px; }
-.curso-estado.con-faltantes .barra-progreso span { background: var(--alerta, #d9822b); }
+.barra-progreso { height: 8px; border-radius: 6px; background: var(--panel-2); margin: 14px 0 6px; overflow: hidden; }
+.barra-progreso span { display: block; height: 100%; background: var(--verde); border-radius: 6px; }
+.curso-estado.con-faltantes .barra-progreso span { background: var(--ambar); }
 .curso-estado .tabla { margin-top: 12px; }
 .curso-estado .col-motivo { overflow-wrap: anywhere; min-width: 220px; }
 .motivo-codigo { display: block; color: var(--muted); font-size: 11px; font-family: monospace; margin-top: 4px; }
 .motivo-vacio { color: var(--muted); font-style: italic; }
-.curso-completo { display: flex; align-items: center; gap: 8px; color: var(--exito, #2e9e5b); font-weight: 600; margin: 12px 0 0; }
+.curso-completo { display: flex; align-items: center; gap: 8px; color: var(--verde); font-weight: 600; margin: 12px 0 0; }
 .curso-estado-acciones { margin-top: 16px; display: flex; justify-content: flex-end; }
 .subidas-detalle { margin-top: 14px; font-size: 13px; }
 .subidas-detalle summary { cursor: pointer; color: var(--muted); }
 .subidas-detalle ul { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 6px; }
-.subidas-detalle li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--linea, rgba(127,127,127,.15)); }
+.subidas-detalle li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--borde); }
 .subidas-detalle li span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.estado-subida { color: var(--exito, #2e9e5b); white-space: nowrap; }
+.estado-subida { color: var(--verde); white-space: nowrap; }
 .intento-fallido { color: var(--muted); font-weight: 400; }
-.estado-vacio { display: flex; gap: 16px; align-items: flex-start; }
-.estado-vacio h2 { margin: 0 0 6px; font-size: 17px; }
-.estado-vacio p { margin: 0 0 14px; color: var(--muted); }
+.estado-vacio { width: min(100%,900px); margin: 2px auto 0; padding: clamp(24px,4vw,40px); display: grid; grid-template-columns: 60px minmax(0,1fr); gap: 20px; align-items: start; border: 1px solid var(--borde); border-radius: 18px; background: var(--panel); }
+.estado-vacio .cursos-vacio-icon { width: 60px; height: 60px; border-radius: 16px; display: grid; place-items: center; }
+.estado-vacio-contenido { min-width: 0; }
+.cursos-eyebrow { display: block; margin: 0 0 8px; color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .09em; }
+.estado-vacio h2 { margin: 0 0 8px; font-size: clamp(20px,2.5vw,25px); line-height: 1.25; font-weight: 800; }
+.estado-vacio p { max-width: 620px; margin: 0 0 20px; color: var(--muted); line-height: 1.6; }
+.estado-vacio .boton { justify-self: start; min-height: 44px; padding: 10px 18px; border-radius: 11px; }
 .col-accion { width: 140px; }
 .verificado { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
-.verificado.ok { color: var(--exito, #2e9e5b); }
+.verificado.ok { color: var(--verde); }
 .verificacion-detalle { display: block; color: var(--muted); font-size: 11px; margin-top: 3px; white-space: normal; }
 .curso-estado-acciones { margin-top: 16px; display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
 
@@ -341,6 +348,7 @@ _CSS_CURSOS = r"""
 }
 .form-manual input[type="file"] { font-size: 14px; color: var(--muted); }
 .form-manual .form-acciones { display: flex; gap: 10px; flex-wrap: wrap; }
+@media(max-width:600px) { .estado-vacio { grid-template-columns: 1fr; gap: 14px; } .estado-vacio .cursos-vacio-icon { width: 48px; height: 48px; } .curso-estado-cabecera { align-items: flex-start; flex-wrap: wrap; } .curso-estado-progreso { margin-left: auto; } }
 """
 
 _JS_CURSOS = r"""
@@ -395,9 +403,10 @@ def cursos_estado():
 
 def _pagina_error(titulo, mensaje, volver="/cursos"):
     cuerpo = (
-        '<section class="panel estado-vacio">' + icon("alerta")
-        + "<div><h2>" + _e(titulo) + "</h2><p>" + _e(mensaje) + "</p>"
-        + '<a class="boton" href="' + volver + '">Volver a Cursos</a></div></section>'
+        '<div class="cursos-page"><section class="panel estado-vacio">'
+        + '<span class="icono-tile cursos-vacio-icon">' + icon("alerta") + '</span>'
+        + '<div class="estado-vacio-contenido"><h2>' + _e(titulo) + '</h2><p>' + _e(mensaje) + '</p>'
+        + '<a class="boton" href="' + volver + '">Volver a Cursos</a></div></section></div>'
     )
     return HTMLResponse(
         render_page(titulo, cuerpo, active="cursos", page_css=_CSS_CURSOS)

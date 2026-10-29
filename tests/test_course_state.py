@@ -6,17 +6,19 @@ Cubren:
 - /analizar: pre-marcado de las actividades que faltaban (reintento).
 """
 
+import json
 import pathlib
 import re
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from main import app
-from auto_prizma.core.config import ESTADO_CURSOS_PATH
+from auto_prizma.core.config import ZONA_HORARIA_COLOMBIA
 from auto_prizma.core.storage import write_json_atomic
 from auto_prizma.services import course_state
-from auto_prizma.services.auth import SESION_COOKIE, _firmar_sesion
+from auto_prizma.services.auth import SESION_COOKIE, USUARIO_ACTUAL, _firmar_sesion
 from auto_prizma.services.error_messages import (
     MENSAJES_ERROR,
     es_codigo_error,
@@ -29,9 +31,10 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(autouse=True)
-def estado_limpio():
-    """Cada prueba arranca con estado_cursos.json vacio y sin trabajos sueltos."""
-    write_json_atomic(ESTADO_CURSOS_PATH, {})
+def estado_limpio(monkeypatch, tmp_path):
+    """Aísla los datos de prueba para no tocar el estado local del usuario."""
+    monkeypatch.setattr(course_state, "ESTADO_CURSOS_PATH", str(tmp_path / "estado_cursos.json"))
+    monkeypatch.setattr(course_state, "RESULTADOS_DIR", str(tmp_path / "reportes"))
     previos = set(TRABAJOS)
     yield
     for clave in set(TRABAJOS) - previos:
@@ -39,25 +42,29 @@ def estado_limpio():
 
 
 def _cliente():
-    cliente = TestClient(app)
+    cliente = TestClient(app, client=("10.0.0.7", 50000))
     cliente.cookies.set(SESION_COOKIE, _firmar_sesion("adminlocal"))
     return cliente
 
 
-def _sembrar(entradas):
+def _sembrar(entradas, usuario_app=None):
     """entradas: [(fila, nombre, resultado, observacion)] del curso fijo."""
-    for fila, nombre, resultado, observacion in entradas:
-        course_state.registrar_resultado_actividad(
-            {
-                "curso": "Contabilidad I",
-                "programa": "Administración de Empresas",
-                "hoja": "Curso A",
-                "fila_excel": fila,
-                "nombre": nombre,
-            },
-            resultado,
-            observacion,
-        )
+    token = USUARIO_ACTUAL.set(usuario_app)
+    try:
+        for fila, nombre, resultado, observacion in entradas:
+            course_state.registrar_resultado_actividad(
+                {
+                    "curso": "Contabilidad I",
+                    "programa": "Administración de Empresas",
+                    "hoja": "Curso A",
+                    "fila_excel": fila,
+                    "nombre": nombre,
+                },
+                resultado,
+                observacion,
+            )
+    finally:
+        USUARIO_ACTUAL.reset(token)
 
 
 # ============================================================
@@ -187,6 +194,24 @@ def test_estado_se_persiste_en_disco():
     assert item["motivo"]  # frase humana
 
 
+def test_estado_de_curso_purga_registros_con_mas_de_15_dias(monkeypatch, tmp_path):
+    ruta = tmp_path / "estado_cursos.json"
+    monkeypatch.setattr(course_state, "ESTADO_CURSOS_PATH", str(ruta))
+    ahora = datetime(2026, 10, 29, tzinfo=ZONA_HORARIA_COLOMBIA)
+    monkeypatch.setattr(course_state, "_ahora_colombia", lambda: ahora)
+    viejo = (ahora - timedelta(days=16)).isoformat()
+    reciente = (ahora - timedelta(days=14)).isoformat()
+    write_json_atomic(str(ruta), {
+        "curso-viejo": {"curso": "Antiguo", "actualizado": viejo, "actividades": {}},
+        "curso-reciente": {"curso": "Vigente", "actualizado": reciente, "actividades": {}},
+    })
+
+    estado = course_state._cargar_estado()
+
+    assert list(estado) == ["curso-reciente"]
+    assert json.loads(ruta.read_text(encoding="utf-8")) == estado
+
+
 # ============================================================
 # PAGINA /cursos
 # ============================================================
@@ -194,6 +219,10 @@ def test_estado_se_persiste_en_disco():
 def test_pagina_cursos_vacia():
     html = _cliente().get("/cursos").text
     assert "Todavía no hay cargues registrados" in html
+    assert 'class="cursos-page"' in html
+    assert 'class="icono-tile cursos-vacio-icon"' in html
+    assert 'class="workspace-tab activo" href="/cursos" aria-current="page">Cursos' in html
+    assert 'class="boton" href="/">Ir a Inicio</a>' in html
 
 
 def test_pagina_cursos_muestra_faltantes_con_motivo_humano_y_boton():
@@ -201,7 +230,7 @@ def test_pagina_cursos_muestra_faltantes_con_motivo_humano_y_boton():
         (5, "Infografía de costos", "OK", ""),
         (6, "Lectura guía", "ERROR", "ERROR_CURSO_SIN_PLANTILLA"),
         (7, "Reto 1", "ERROR", "ERROR_RECURSO_NO_ENCONTRADO"),
-    ])
+    ], usuario_app="adminlocal")
 
     html = _cliente().get("/cursos").text
 
@@ -217,7 +246,7 @@ def test_pagina_cursos_muestra_faltantes_con_motivo_humano_y_boton():
 
 
 def test_pagina_cursos_marca_curso_completo():
-    _sembrar([(5, "Infografía de costos", "OK", "")])
+    _sembrar([(5, "Infografía de costos", "OK", "")], usuario_app="adminlocal")
 
     html = _cliente().get("/cursos").text
     assert "Curso completo" in html
@@ -286,12 +315,12 @@ def test_analizar_pre_marca_solo_las_que_faltaban():
     _sembrar([
         (5, "Infografía de costos", "OK", ""),            # ya subida
         (6, "Lectura guía", "ERROR", "ERROR_RECURSO_NO_ENCONTRADO"),  # falta
-    ])
+    ], usuario_app="adminlocal")
 
     cliente = _cliente()
     respuesta = cliente.post(
         "/analizar",
-        data={"modo_matriz": "archivo", "ovi": "1"},
+            data={"ovi": "1"},
         files={
             "matriz_archivo": ("matriz.xlsx", _matriz_xlsx(), "application/octet-stream"),
             "recursos": ("recursos.zip", _zip_recursos(), "application/zip"),
@@ -310,7 +339,7 @@ def test_analizar_pre_marca_solo_las_que_faltaban():
 def test_analizar_sin_faltantes_lo_deja_como_antes():
     html = _cliente().post(
         "/analizar",
-        data={"modo_matriz": "archivo", "ovi": "1"},
+        data={"ovi": "1"},
         files={
             "matriz_archivo": ("matriz.xlsx", _matriz_xlsx(), "application/octet-stream"),
             "recursos": ("recursos.zip", _zip_recursos(), "application/zip"),
@@ -377,7 +406,6 @@ def _actividad_completa(fila=6, nombre="Lectura guía"):
         "tipo_recurso": "PDF descargable",
         "tipo_archivo": "PDF",
         "enlace": "",
-        "url_recurso": "",
     }
 
 
@@ -421,10 +449,10 @@ def test_actividad_para_reintento_completa_registros_viejos_desde_el_reporte():
     """Los registros antiguos no guardaban categoria/tipo: se regeneran del CSV."""
     _sembrar([(6, "Lectura guía", "ERROR", "ERROR_RECURSO_NO_ENCONTRADO")])
 
-    from auto_prizma.core.config import RESULTADOS_DIR
     import csv as _csv
     import os as _os
 
+    RESULTADOS_DIR = course_state.RESULTADOS_DIR
     _os.makedirs(RESULTADOS_DIR, exist_ok=True)
     ruta = _os.path.join(RESULTADOS_DIR, "2026-10-01_10-00-00 - Contabilidad I - x.csv")
     with open(ruta, "w", newline="", encoding="utf-8-sig") as fh:
@@ -474,7 +502,7 @@ def test_actividad_para_reintento_no_entrega_cursos_de_otro_usuario():
     id_curso = course_state._clave_curso("Contabilidad I", "Administración de Empresas")
     datos = course_state._cargar_estado()
     datos[id_curso]["usuario_app"] = "otra_persona"
-    write_json_atomic(ESTADO_CURSOS_PATH, datos)
+    write_json_atomic(course_state.ESTADO_CURSOS_PATH, datos)
 
     actividad, error = course_state.actividad_para_reintento(
         id_curso, "Curso A|6", "adminlocal",
@@ -482,6 +510,24 @@ def test_actividad_para_reintento_no_entrega_cursos_de_otro_usuario():
 
     assert actividad is None
     assert "no pertenece" in error
+
+
+def test_mismo_curso_se_guarda_por_separado_para_cada_usuario():
+    for usuario, nombre in (("ana", "Matriz Ana"), ("beto", "Matriz Beto")):
+        token = USUARIO_ACTUAL.set(usuario)
+        try:
+            actividad = _actividad_completa()
+            actividad["nombre"] = nombre
+            course_state.registrar_resultado_actividad(actividad, "ERROR", "ERROR_RECURSO_NO_ENCONTRADO")
+        finally:
+            USUARIO_ACTUAL.reset(token)
+
+    ana = course_state.resumen_cursos("ana")
+    beto = course_state.resumen_cursos("beto")
+    assert len(ana) == len(beto) == 1
+    assert ana[0]["detalle_faltantes"][0]["nombre"] == "Matriz Ana"
+    assert beto[0]["detalle_faltantes"][0]["nombre"] == "Matriz Beto"
+    assert ana[0]["id"] != beto[0]["id"]
 
 
 def test_actividades_para_verificar_separa_lo_incompleto():
@@ -545,7 +591,7 @@ def test_pagina_cursos_ofrece_reintento_individual_y_verificacion():
     _sembrar([
         (5, "Infografía de costos", "OK", ""),
         (6, "Lectura guía", "ERROR", "ERROR_RECURSO_NO_ENCONTRADO"),
-    ])
+    ], usuario_app="adminlocal")
 
     html = _cliente().get("/cursos").text
 

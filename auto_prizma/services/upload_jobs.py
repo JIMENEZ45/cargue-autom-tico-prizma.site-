@@ -10,7 +10,6 @@ from auto_prizma.automation.prizma.engine import (
 )
 import json
 import os
-import shutil
 import threading
 import uuid
 from collections import deque
@@ -24,9 +23,7 @@ from auto_prizma.core.config import (
     UPLOADS_DIR,
 )
 from auto_prizma.services.auth import USUARIO_ACTUAL, _es_de
-from auto_prizma.services.drive_zip_validation import _prevalidar_recursos_drive_zip_ultrarapido
 from auto_prizma.services.history import _nombre_reporte, _registrar_reporte_final
-from auto_prizma.integrations.google.drive import _DRIVE_THREAD_LOCAL
 
 
 # ============================================================
@@ -125,14 +122,6 @@ def ejecutar_cargue_con_historial(
     contrasena_prizma,
     trabajo,
 ):
-    _DRIVE_THREAD_LOCAL.recursos = trabajo.get(
-        "recursos_drive_resueltos",
-        {},
-    )
-    _DRIVE_THREAD_LOCAL.hoja_objetivo = trabajo.get(
-        "hoja_objetivo",
-    )
-
     # El hilo del worker no hereda el contexto de la peticion.
     testigo_usuario = USUARIO_ACTUAL.set(trabajo.get("usuario_app"))
 
@@ -152,12 +141,7 @@ def ejecutar_cargue_con_historial(
             formato_recurso=trabajo.get("formato_recurso") or FORMATO_RECURSO_POR_DEFECTO,
         )
     finally:
-        try:
-            _DRIVE_THREAD_LOCAL.recursos = {}
-            _DRIVE_THREAD_LOCAL.hoja_objetivo = None
-            USUARIO_ACTUAL.reset(testigo_usuario)
-        except Exception:
-            pass
+        USUARIO_ACTUAL.reset(testigo_usuario)
         # El registro en historial se hace en _ejecutar_cargue_en_hilo,
         # despues de que tambien corra (si aplica) el Test Evaluativo,
         # para que el resultado del test quede reflejado.
@@ -449,9 +433,6 @@ def create_analyzed_job(
     contenido_zip,
     hojas,
     zip_info,
-    modo_matriz,
-    google_sheet_url,
-    hoja_objetivo,
     nombre_matriz,
     procesar_ovi,
     procesar_ova,
@@ -464,32 +445,26 @@ def create_analyzed_job(
     """Registra un trabajo de cargue a partir de un analisis valido.
 
     Guarda la matriz y el ZIP en uploads/<id>/, crea temp/<id>/, ejecuta la
-    prevalidacion Drive-ZIP (solo con matriz por link) y deja el trabajo en
-    TRABAJOS con etapa "analizado".
+    deja el trabajo en TRABAJOS con etapa "analizado". Los recursos se
+    resuelven exclusivamente contra el ZIP seleccionado por el usuario.
 
     Args:
         contenido_excel: bytes de la matriz ya normalizada a XLSX.
         contenido_zip: bytes del ZIP de recursos.
         hojas: hojas validas devueltas por analizar_excel.
         zip_info: resumen devuelto por analizar_zip.
-        modo_matriz: "link" (Google Sheets) o "archivo".
-        google_sheet_url: enlace de la matriz (solo modo link).
-        hoja_objetivo: pestana del enlace (#gid) o None.
         nombre_matriz: nombre visible de la matriz.
         procesar_ovi, procesar_ova, procesar_retos: categorias elegidas.
         usuario_app: usuario de la aplicacion dueno del trabajo.
         test_job_id: id del Test Evaluativo combinado, si lo hay.
         test_info: resumen del Test Evaluativo para la pagina, si lo hay.
-        formato_recurso: "H5P" o "HTML". En modo HTML no se valida contra
-            Drive: los .html solo vienen en el ZIP y se emparejan por nombre.
+        formato_recurso: "H5P" o "HTML".
 
     Returns:
         (trabajo_id, resultado): resultado es lo que muestra la pagina de analisis.
 
     Raises:
-        ValueError: si la prevalidacion Drive-ZIP encuentra problemas
-            estructurales (con el mensaje para el usuario). Antes se borran
-            las carpetas creadas.
+        ValueError: si los archivos no se pueden guardar.
     """
     trabajo_id = uuid.uuid4().hex
     carpeta_trabajo = os.path.join(UPLOADS_DIR, trabajo_id)
@@ -508,59 +483,6 @@ def create_analyzed_job(
     os.makedirs(carpeta_temp, exist_ok=True)
 
     modo_html = str(formato_recurso or "").strip().upper() == "HTML"
-
-    if modo_matriz == "link" and not modo_html:
-        preflight_drive = _prevalidar_recursos_drive_zip_ultrarapido(
-            google_sheet_url,
-            ruta_excel,
-            ruta_zip,
-            procesar_ovi,
-            procesar_ova,
-            procesar_retos,
-            hoja_objetivo,
-        )
-
-        recursos_drive_resueltos = preflight_drive.pop(
-            "_mapa_resueltos",
-            {},
-        )
-
-        if not preflight_drive.get("ok"):
-            errores_drive = preflight_drive.get("errores") or []
-            resumen_errores = " | ".join(errores_drive[:8])
-
-            if len(errores_drive) > 8:
-                resumen_errores += (
-                    " | ... y "
-                    + str(len(errores_drive) - 8)
-                    + " error(es) más."
-                )
-
-            shutil.rmtree(carpeta_trabajo, ignore_errors=True)
-            shutil.rmtree(carpeta_temp, ignore_errors=True)
-
-            raise ValueError(
-                "La validación Google Drive vs ZIP encontró problemas. "
-                + resumen_errores
-            )
-    else:
-        # En modo archivo (o en modo HTML) no se valida contra Drive. El motor
-        # conserva su resolvedor seguro de recursos del ZIP y nunca elige
-        # ambiguos.
-        recursos_drive_resueltos = {}
-        preflight_drive = {
-            "ok": True,
-            "modo": "html" if modo_html else "archivo",
-            "total_actividades": sum(
-                len(hoja.get("actividades") or []) for hoja in hojas
-            ),
-            "validadas_drive": 0,
-            "coincidencias_zip": 0,
-            "errores": [],
-            "advertencias": [],
-            "recursos": [],
-        }
-
     cursos_trabajo = _cursos_desde_hojas(hojas)
     ruta_reporte = os.path.join(
         RESULTADOS_DIR,
@@ -585,9 +507,6 @@ def create_analyzed_job(
         "errores": 0,
         "terminado": False,
         "detalle_actividades": [],
-        "recursos_drive_resueltos": recursos_drive_resueltos,
-        "hoja_objetivo": hoja_objetivo,
-        "origen_matriz": modo_matriz,
         "nombre_matriz": nombre_matriz,
         "usuario_app": usuario_app,
         "cursos": cursos_trabajo,
@@ -599,8 +518,6 @@ def create_analyzed_job(
     resultado = {
         "hojas": hojas,
         "zip": zip_info,
-        "drive": preflight_drive,
-        "origen_matriz": modo_matriz,
         "nombre_matriz": nombre_matriz,
         "formato_recurso": "HTML" if modo_html else "H5P",
     }

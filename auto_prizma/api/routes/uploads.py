@@ -306,12 +306,12 @@ _CSS_CARGUES = r"""
 .avance-cab { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; color: var(--muted); font-size: 12px; }
 .avance-cab strong { font-size: 22px; color: var(--acento-texto); }
 .barra { height: 10px; border-radius: 999px; background: var(--acento-suave); overflow: hidden; }
-.barra-interna { height: 100%; border-radius: 999px; background: linear-gradient(90deg, #6759f5, #4f46e5); }
+.barra-interna { height: 100%; border-radius: 999px; background: var(--boton); }
 .metricas { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
 .metricas div { display: grid; grid-template-columns: 8px 1fr; column-gap: 6px; align-items: center; }
 .metricas i { width: 7px; height: 7px; border-radius: 50%; }
-.metricas i.verde { background: #12b76a; }
-.metricas i.rojo { background: #f04438; }
+.metricas i.verde { background: var(--verde); }
+.metricas i.rojo { background: var(--rojo); }
 .metricas small { font-size: 11px; color: var(--muted); }
 .metricas strong { grid-column: 2; font-size: 15px; color: var(--texto); }
 .accion-bloque { display: grid; gap: 8px; padding-left: 22px; border-left: 1px solid var(--borde); }
@@ -429,7 +429,7 @@ _CSS_PROGRESO = r"""
 .porcentaje { font-size: 14px; color: var(--muted); }
 .porcentaje strong { font-size: 20px; color: var(--acento-texto); }
 .barra-progreso { height: 12px; background: var(--acento-suave); border-radius: 999px; overflow: hidden; margin: 22px 0 14px; }
-.progreso { height: 100%; width: 0%; border-radius: 999px; background: linear-gradient(90deg, #6759f5, #4f46e5); transition: width .35s ease; }
+.progreso { height: 100%; width: 0%; border-radius: 999px; background: var(--boton); transition: width .35s ease; }
 .estado { color: var(--acento-texto); font-size: 14px; font-weight: 600; line-height: 1.45; }
 .numeros { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin: 20px 0; }
 .numero { padding: 20px; display: flex; align-items: center; gap: 16px; }

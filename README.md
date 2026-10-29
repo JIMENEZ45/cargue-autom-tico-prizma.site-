@@ -8,7 +8,7 @@ App web (Python + FastAPI) que automatiza el cargue de actividades a **PRIZMA**.
 
 - **Python 3.12 o superior**
 - **Git**
-- **Google Chrome/Chromium** se instala solo (paso 2)
+- **Chromium** se instala solo (paso 2)
 
 ---
 
@@ -46,16 +46,17 @@ La app **funciona sin ninguna**. Todas tienen valor por defecto. Solo se definen
 
 | Variable | Para qué | Por defecto |
 |---|---|---|
-| `GOOGLE_CLIENT_ID` | OAuth de Google (Sheets/Drive) | — |
-| `GOOGLE_CLIENT_SECRET` | OAuth de Google | — |
-| `GOOGLE_REDIRECT_URI` | URL de retorno OAuth | — |
-| `AUTO_PRIZMA_SECRET` | Firma de cookies de sesión | Se genera en `data/secreto_sesion.txt` |
 | `AUTO_PRIZMA_URL_PRIZMA` | URL de PRIZMA. Vacío = producción | `https://admin.prizma.site` |
 | `AUTO_PRIZMA_DATA_DIR` | Carpeta de datos | `./data` |
 | `AUTO_PRIZMA_MAX_SIMULTANEOS` | Cargues a la vez (1 o 2) | `2` |
-| `AUTO_PRIZMA_SIN_LOGIN` | Entrar sin usuario/contraseña **solo en tu equipo** (ver *Entrar*) | — (login normal) |
+| `N8N_WEBHOOK_AUT_TESTS` | Reemplaza el webhook institucional de tests JSON | Webhook institucional configurado en servidor |
+| `N8N_WEBHOOK_DESCARGAR_RECURSOS` | Reemplaza el webhook institucional de descarga de recursos | Webhook institucional configurado en servidor |
+| `N8N_WEBHOOK_DESCARGAR_RECURSOS_ESTADO` | Reemplaza el webhook (GET) que informa el avance de la descarga de recursos | Webhook institucional configurado en servidor |
+| `N8N_WEBHOOK_MATRIZ_CSV` | Reemplaza el webhook institucional de la matriz CSV | Webhook institucional configurado en servidor |
+| `N8N_WEBHOOK_PLANTILLAS` | Reemplaza el webhook institucional de plantillas temáticas | Webhook institucional configurado en servidor |
+| `N8N_SHARED_SECRET` | Secreto opcional enviado como `x-n8n-secret` | Vacío |
 
-**La app NO lee `.env` automáticamente.** Para usar Google, defines las variables en la terminal antes de arrancar (o usa `./arrancar.sh` en macOS/Linux, que las carga desde `.env`).
+**La app NO lee `.env` automáticamente.** `arrancar.sh` sí carga `.env` si existe; si arrancas Uvicorn manualmente, define las variables en la terminal. Las matrices y los documentos de evaluación se cargan como archivos locales.
 
 ---
 
@@ -79,47 +80,21 @@ Abre **http://127.0.0.1:8000**
 
 ---
 
-## Crear usuario
+## Acceso
 
-No hay registro web. Se crea desde consola (con el entorno activado):
-
-### macOS / Linux
-
-```bash
-python scripts/manage_users.py crear      # interactive
-python scripts/manage_users.py listar     # ver usuarios
-python scripts/manage_users.py clave      # cambiar contraseña
-```
-
-### Windows (PowerShell)
-
-```powershell
-python scripts\manage_users.py crear
-python scripts\manage_users.py listar
-python scripts\manage_users.py clave
-```
-
-La contraseña debe tener **mínimo 8 caracteres**. Pedirá usuario, nombre a mostrar y contraseña (dos veces).
-
----
-
-## Entrar
-
-Ve a **http://127.0.0.1:8000/login** con el usuario y contraseña que creaste.
-
-**Sin login (solo en tu equipo):** define la variable con tu usuario antes de arrancar y entrarás directo, sin usuario ni contraseña. Solo funciona desde `127.0.0.1`: desde otra IP se sigue pidiendo login. No la definas en Railway ni en un servidor.
-
-```powershell
-$env:AUTO_PRIZMA_SIN_LOGIN = "tu-usuario"
-uvicorn main:app --port 8000
-```
+En local, abre **http://127.0.0.1:8000**: la app entra directamente, sin usuario ni contraseña. Este acceso directo solo se aplica a conexiones desde el mismo equipo; los despliegues remotos conservan su protección de acceso.
 
 Dentro de la app:
 
-- **Inicio** — sube la matriz y el ZIP y arranca el cargue.
-- **Cursos** — por curso: cuántas actividades ya están en PRIZMA y **por qué falta cada una** (mensaje legible, no código). Al volver a subir la matriz del mismo curso, **las pendientes se marcan solas** y las ya cargadas quedan sin marca: es el reintento sin tener que elegir una por una.
-- **Historial / Reportes** — cargues anteriores y su reporte CSV (columnas `Motivo` = explicación en español y `Hoja`).
-- **Cargue Moodle** — solo en local: publica PDF y H5P en un curso de Prizma (ver abajo).
+- **Inicio** — landing con tarjetas para **Matrices**, **Cargue PRIZMA**, **Cargue Moodle** y **Automatizaciones**, en ese orden (el sidebar también incluye Control Tower antes de Matrices). La cabecera ofrece accesos directos a **Entrar a PRIZMA** (`https://admin.prizma.site/`) y **Control Tower**. La app usa transiciones y animaciones suaves en navegación y controles, y respeta la preferencia de reducir movimiento del sistema.
+- **Control Tower** — acceso directo a la herramienta de gestión de tareas; se abre en una pestaña nueva para conservar el inicio de sesión de Google. También está disponible desde el sidebar.
+- **Cargue PRIZMA** — abre primero en **Auditor** y reúne en pestañas el cargue, Test, Cursos, En curso, Historial y Reportes. Si combinas Test Evaluativo con recursos, se valida el documento antes de iniciar; los errores bloquean el cargue y se muestran para corregirlos. Cursos explica por qué falta cada actividad y permite identificar pendientes para reintento.
+- **Cargue Moodle** — mantiene su flujo independiente para publicar PDF/H5P; incluye pestañas de Auditor, **Etiquetas** y reportes. En Etiquetas hay tarjetas independientes para banners, infografías y videos; al cargar una imagen se genera el HTML correspondiente y la imagen se incrusta como Data URL en `src`, sin subirla a Moodle.
+- **Automatizaciones** — formularios para ejecutar los cuatro flujos del equipo y un acceso directo a PRIZMA para **Crear semanas de curso** desde CSV. Las URLs de webhook solo se usan desde el servidor y nunca se envían al navegador; sin configurar, los flujos quedan en modo demo.
+
+Los webhooks deben aceptar `POST` con JSON y responder con JSON (por ejemplo, `message`, `folderUrl`, `folderName`, `fileName`, `totalTests` o `expiresInMinutes`). Activa el webhook de producción en n8n. Configura las URLs HTTPS en el entorno del servidor; no guardes valores reales en `.env.example` ni en Git. Si usas autenticación en n8n, configura el mismo valor en `N8N_SHARED_SECRET`.
+
+Para flujos que tardan más de un minuto (Descarga de recursos), el webhook responde de inmediato con `status: "processing"` y un `jobId`; la app muestra **Cargando recursos…** y consulta el webhook de estado hasta recibir `status: "done"`.
 
 ---
 
@@ -137,20 +112,6 @@ Pasos detallados y explicación de los estados en **`GUIA_DETALLADA.md`** → *U
 
 ---
 
-## Conectar Google (opcional)
-
-Solo si vas a analizar matrices desde enlaces de Google Sheets o carpetas de Drive.
-
-1. En [Google Cloud Console](https://console.cloud.google.com/) crea un proyecto.
-2. Habilita **Google Sheets API** y **Google Drive API**.
-3. Pantalla de consentimiento OAuth → tipo **Externo**; agrega tu correo como **usuario de prueba**.
-4. **Credenciales** → *ID de cliente OAuth* → tipo **Aplicación web**.
-   - URI de redirección: `http://127.0.0.1:8000/google/callback`
-5. Copia el **ID** y el **Secreto** a las variables de entorno y reinicia la app.
-6. Dentro de la app, pulsa **"Conectar con Google"**.
-
----
-
 ## Problemas comunes
 
 | Problema | Solución |
@@ -158,8 +119,6 @@ Solo si vas a analizar matrices desde enlaces de Google Sheets o carpetas de Dri
 | `ModuleNotFoundError` | No activaste el venv. `source .venv/bin/activate` (mac) o `.\.venv\Scripts\Activate.ps1` (win) |
 | "Chromium no disponible" | `playwright install chromium` |
 | Puerto 8000 ocupado | `kill $(lsof -ti :8000)` (mac) o cierra la otra terminal (win) |
-| Google: *Faltan variables* | Define `GOOGLE_CLIENT_ID/SECRET/REDIRECT_URI` |
-| Google: *redirect_uri_mismatch* | La URI debe coincidir **exactamente** con la registrada en Google Cloud |
 | Login bloqueado | Espera 120 s (bloqueo tras 5 intentos fallidos) |
 | Un cargue salió con errores | Entra a **Cursos**: te dice cuáles faltan y la causa en español. En el CSV, la columna `Motivo` la explica y `Observación` conserva el código `ERROR_*` |
 
