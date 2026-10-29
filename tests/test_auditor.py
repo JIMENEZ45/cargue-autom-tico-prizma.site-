@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 
 from main import app
 from auto_prizma.auditor import procesar
+from auto_prizma.core.config import DATA_DIR
 from auto_prizma.services.auth import _firmar_sesion
 
 
@@ -37,6 +38,7 @@ def _h5p(titulo):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as z:
         z.writestr("h5p.json", json.dumps({"title": titulo}))
+        z.writestr("content/content.json", json.dumps({"title": titulo}))
     return buf.getvalue()
 
 
@@ -90,7 +92,8 @@ def test_matriz_ignora_filas_sin_categoria_y_filas_titulo(tmp_path):
     recursos, _adv = procesar.leer_matriz_texto(csv_text)
 
     assert [r["nombre"] for r in recursos] == ["Video de apertura"]
-    assert recursos[0]["fuera_de_alcance"] is True
+    assert recursos[0]["fuera_de_alcance"] is False
+    assert recursos[0]["ext_esperada"] == "video"
 
 
 def test_quitar_prefijo_reconoce_prefijos_reales():
@@ -212,6 +215,21 @@ def test_h5p_con_titulo_interno_correcto_es_ok(tmp_path):
     assert "Taller de escritura" in r["detalle"]
 
 
+def test_h5p_coincidente_sin_titulo_de_portada_no_es_alerta(tmp_path):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("h5p.json", json.dumps({"title": "Taller de escritura"}))
+        z.writestr("content/content.json", json.dumps({"library": "H5P.InteractiveBook"}))
+    csv_text = ENCABEZADO + "1,,Taller de escritura,OVI,H5P,\n"
+
+    r = _de(_resultados(csv_text, {"Videos/Taller de escritura.h5p": buf.getvalue()}, tmp_path), "Taller de escritura")
+
+    assert r["estado"] == "ok"
+    assert 'título interno coincide ("Taller de escritura")' in r["detalle"]
+    assert "portada" not in r["detalle"]
+    assert "subcarpeta" in r["detalle"]
+
+
 def test_h5p_con_titulo_interno_distinto_es_alerta(tmp_path):
     csv_text = ENCABEZADO + "1,,Taller de escritura,OVI,H5P,\n"
     lista = _resultados(
@@ -255,6 +273,21 @@ def test_ejecutar_auditoria_completa_escribe_reportes(tmp_path):
     assert "Recurso guía" in reporte
 
 
+def test_ejecutar_auditoria_salida_none_no_persiste_reportes(tmp_path):
+    carpeta = tmp_path / "recursos"
+    carpeta.mkdir()
+    _escribir(str(carpeta), {"Recurso guía.pdf": b"%PDF"})
+    res = procesar.ejecutar_auditoria(
+        str(carpeta), None, None,
+        matriz_texto=ENCABEZADO + "1,,Recurso guía,OVI,PDF,\n",
+        matriz_nombre="matriz.csv",
+    )
+    assert res["ok"] is True
+    assert res["reporte_md"] is None
+    assert res["reporte_json"] is None
+    assert list(tmp_path.iterdir()) == [carpeta]
+
+
 def test_ejecutar_auditoria_zip_invalido_se_explica(tmp_path):
     archivo = tmp_path / "no.zip"
     archivo.write_bytes(b"basura")
@@ -283,6 +316,23 @@ def test_pagina_auditor_muestra_formulario_y_nav():
     assert 'href="/auditor"' in respuesta.text  # enlace en el menu
 
 
+def test_auditor_marca_recurso_sin_nombre_como_alerta():
+    recursos, avisos = procesar.leer_matriz_texto(ENCABEZADO + "1,, ,OVI,PDF,\n")
+    assert recursos and recursos[0]["nombre"] == ""
+    assert any("falta el nombre" in aviso.lower() for aviso in avisos)
+    resultado, _, _ = procesar.emparejar(recursos, [])
+    assert resultado[0]["estado"] == "alerta"
+    assert "vacío" in resultado[0]["detalle"]
+
+
+def test_archivo_de_cero_bytes_no_pasa_validacion(tmp_path):
+    empty = tmp_path / "vacio.pdf"
+    empty.write_bytes(b"")
+    estado, detalle = procesar.verificar_abre("vacio.pdf", ".pdf", str(empty))
+    assert estado == "error"
+    assert "vacío" in detalle
+
+
 def test_auditoria_web_completa_muestra_dictamen(tmp_path):
     csv_text = ENCABEZADO + "1,,Recurso guía,OVI,PDF,\n"
     buf_zip = io.BytesIO()
@@ -300,7 +350,9 @@ def test_auditoria_web_completa_muestra_dictamen(tmp_path):
     assert respuesta.status_code == 200
     assert "Todo calza" in respuesta.text
     assert "mosaicos" in respuesta.text
-    assert "/auditor/reporte/auditoria_" in respuesta.text
+    assert "Auditorías anteriores" not in respuesta.text
+    assert "/auditor/reporte/" not in respuesta.text
+    assert not os.path.exists(os.path.join(DATA_DIR, "auditorias"))
 
 
 def test_auditoria_web_matriz_no_csv_se_explica():
@@ -328,24 +380,29 @@ def test_auditoria_web_zip_invalido_se_explica():
     assert "no es un ZIP" in respuesta.text
 
 
-def test_reporte_se_descarga_y_ruta_trucha_da_404():
-    csv_text = ENCABEZADO + "1,,Recurso guía,OVI,PDF,\n"
-    buf_zip = io.BytesIO()
-    with zipfile.ZipFile(buf_zip, "w") as z:
-        z.writestr("Recurso guía.pdf", b"%PDF")
-    cliente = _cliente()
-    respuesta = cliente.post(
-        "/auditor",
-        files={
-            "matriz": ("matriz.csv", csv_text.encode(), "text/csv"),
-            "recursos": ("recursos.zip", buf_zip.getvalue(), "application/zip"),
-        },
-    )
-    inicio = respuesta.text.find("/auditor/reporte/auditoria_")
-    enlace = respuesta.text[inicio:respuesta.text.find('"', inicio)]
-    reporte = cliente.get(enlace)
-    assert reporte.status_code == 200
-    assert "Recurso guía" in reporte.text
+def test_endpoint_de_reportes_anteriores_eliminado():
+    assert _cliente().get("/auditor/reporte/auditoria_20260101_000000_000.md").status_code == 404
 
-    trucha = cliente.get("/auditor/reporte/../secreto_sesion.txt")
-    assert trucha.status_code == 404
+
+def test_toda_fila_con_enlace_se_audita_incluidos_videos(tmp_path):
+    csv_text = (
+        "Semana,Unidad,,Nombre del recurso,Categoria,Tipo de recurso,Enlace\n"
+        "Semana 1,Unidad 1,,Video Intro,OVI,Video Intro,intro gestion.webm\n"
+        "Semana 8,Unidad 3,,Video Cierre,OVI,Video Cierre,cierre-.webm\n"
+        "Semana 8,Unidad 3,,Recurso sin categoria,,PDF,PDF- recurso\n"
+        "Semana 8,Unidad 3,,Nota sin enlace,,,\n"
+    )
+    recursos, advertencias = procesar.leer_matriz_texto(csv_text)
+    assert [r["nombre"] for r in recursos] == ["Video Intro", "Video Cierre", "Recurso sin categoria"]
+    assert any("sin categoria" in a.lower() or "no categoría" in a for a in advertencias)
+
+    archivos = [
+        {"nombre": "Video Intro.webm", "base": "Video Intro", "ext": ".webm", "clave": procesar.clave("Video Intro"), "usado": False, "ruta": ""},
+        {"nombre": "cierre-.webm", "base": "cierre-", "ext": ".webm", "clave": procesar.clave("cierre-"), "usado": False, "ruta": ""},
+    ]
+    resultados, huerfanos, _ = procesar.emparejar(recursos, archivos)
+    estados = {r["nombre"]: r["estado"] for r in resultados}
+    assert estados["Video Intro"] == "ok"
+    assert estados["Video Cierre"] == "ok"
+    assert estados["Recurso sin categoria"] == "faltante"
+    assert huerfanos == []

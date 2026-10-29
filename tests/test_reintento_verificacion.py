@@ -18,10 +18,8 @@ from fastapi.testclient import TestClient
 from main import app
 from auto_prizma.api.routes import courses
 from auto_prizma.automation.prizma import engine
-from auto_prizma.core.config import ESTADO_CURSOS_PATH, RESULTADOS_DIR
-from auto_prizma.core.storage import write_json_atomic
 from auto_prizma.services import course_state
-from auto_prizma.services.auth import SESION_COOKIE, _firmar_sesion
+from auto_prizma.services.auth import SESION_COOKIE, USUARIO_ACTUAL, _firmar_sesion
 from auto_prizma.services.upload_jobs import TRABAJOS
 
 
@@ -31,8 +29,13 @@ def _lanzar_sincrono(target, args):
 
 
 @pytest.fixture(autouse=True)
-def limpio():
-    write_json_atomic(ESTADO_CURSOS_PATH, {})
+def limpio(monkeypatch, tmp_path):
+    """Aísla estado y reportes de prueba de los datos locales del usuario."""
+    monkeypatch.setattr(course_state, "ESTADO_CURSOS_PATH", str(tmp_path / "estado_cursos.json"))
+    report_dir = str(tmp_path / "reportes")
+    os.makedirs(report_dir, exist_ok=True)
+    monkeypatch.setattr(course_state, "RESULTADOS_DIR", report_dir)
+    monkeypatch.setattr(courses, "RESULTADOS_DIR", report_dir)
     previos = set(TRABAJOS)
     _soltar_candado()
     yield
@@ -73,12 +76,16 @@ def _sembrar(fila=6, nombre="Lectura guía", curso="Contabilidad I", completo=Tr
             "fila_excel": fila,
             "nombre": nombre,
         }
-    course_state.registrar_resultado_actividad(
-        actividad,
-        "ERROR",
-        "ERROR_RECURSO_NO_ENCONTRADO",
-    )
-    return course_state._clave_curso(curso, "Administración de Empresas")
+    token = USUARIO_ACTUAL.set("adminlocal")
+    try:
+        course_state.registrar_resultado_actividad(
+            actividad,
+            "ERROR",
+            "ERROR_RECURSO_NO_ENCONTRADO",
+        )
+    finally:
+        USUARIO_ACTUAL.reset(token)
+    return course_state._clave_curso(curso, "Administración de Empresas", "adminlocal")
 
 
 def _post_reintento(cliente, id_curso, clave="Curso A|6", archivo=("guia.pdf", b"%PDF-1.4"), **campos_extra):
@@ -192,7 +199,6 @@ def test_cargue_automatico_omite_recurso_que_ya_esta_montado(monkeypatch, tmp_pa
         "nombre": "Lectura guía", "fila_excel": 6,
         "categoria_prizma": "OVI", "tipo_archivo": "PDF",
     }
-    monkeypatch.setattr(engine, "validar_carpeta_drive_para_actividad", lambda _: None)
     monkeypatch.setattr(
         engine, "resolver_recurso",
         lambda *args: ({"ruta": str(tmp_path / "guia.pdf"), "nombre_original": "guia.pdf"}, None),
@@ -337,21 +343,25 @@ def test_verificar_curso_desconocido():
 def test_verificar_ajusta_el_estado_a_lo_que_aparece(monkeypatch):
     # Subida que ya no aparece, faltante que si aparece y una sin datos.
     _sembrar(fila=5, nombre="Infografía de costos")
-    course_state.registrar_resultado_actividad(
-        {
-            "curso": "Contabilidad I",
-            "programa": "Administración de Empresas",
-            "hoja": "Curso A",
-            "fila_excel": 5,
-            "semana": "Semana 1",
-            "unidad": "Unidad 1",
-            "nombre": "Infografía de costos",
-            "categoria_prizma": "OVI",
-            "tipo_archivo": "H5P",
-        },
-        "OK",
-        "",
-    )
+    token = USUARIO_ACTUAL.set("adminlocal")
+    try:
+        course_state.registrar_resultado_actividad(
+            {
+                "curso": "Contabilidad I",
+                "programa": "Administración de Empresas",
+                "hoja": "Curso A",
+                "fila_excel": 5,
+                "semana": "Semana 1",
+                "unidad": "Unidad 1",
+                "nombre": "Infografía de costos",
+                "categoria_prizma": "OVI",
+                "tipo_archivo": "H5P",
+            },
+            "OK",
+            "",
+        )
+    finally:
+        USUARIO_ACTUAL.reset(token)
     id_curso = _sembrar(fila=6, nombre="Lectura guía")
 
     def _falsa_verificacion(usuario, contrasena, actividades, estado):

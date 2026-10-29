@@ -28,7 +28,8 @@ from auto_prizma.services.auth import (
     _normalizar_usuario,
     _registrar_fallo,
     _usuario_de_request,
-    local_login_user_for,
+    local_identity_for,
+    ACCESO_LOCAL_DIRECTO,
 )
 
 
@@ -99,8 +100,9 @@ async def exigir_sesion(request: FastAPIRequest, call_next):
     if ruta in RUTAS_PUBLICAS:
         return await call_next(request)
 
-    # Sin login solo en local (AUTO_PRIZMA_SIN_LOGIN y petición desde 127.0.0.1).
-    usuario = _usuario_de_request(request) or local_login_user_for(request)
+    # En el equipo local se usa una identidad fija; fuera de loopback se exige sesión.
+    identidad_local = local_identity_for(request)
+    usuario = identidad_local or _usuario_de_request(request)
 
     if not usuario:
         acepta = str(request.headers.get("accept") or "")
@@ -114,17 +116,19 @@ async def exigir_sesion(request: FastAPIRequest, call_next):
         return RedirectResponse("/login", status_code=303)
 
     testigo = USUARIO_ACTUAL.set(usuario)
+    testigo_local = ACCESO_LOCAL_DIRECTO.set(identidad_local is not None)
     request.state.usuario = usuario
 
     try:
         return await call_next(request)
     finally:
+        ACCESO_LOCAL_DIRECTO.reset(testigo_local)
         USUARIO_ACTUAL.reset(testigo)
 
 
 @app.get("/login", response_class=HTMLResponse)
 def login_formulario(request: FastAPIRequest):
-    if _usuario_de_request(request) or local_login_user_for(request):
+    if _usuario_de_request(request) or local_identity_for(request):
         return RedirectResponse("/", status_code=303)
 
     return HTMLResponse(_pagina_login())
@@ -136,6 +140,9 @@ def login_enviar(
     usuario: str = Form(...),
     contrasena: str = Form(...),
 ):
+    if local_identity_for(request):
+        return RedirectResponse("/", status_code=303)
+
     usuario = _normalizar_usuario(usuario)
 
     origen = str(

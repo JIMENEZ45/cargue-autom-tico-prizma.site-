@@ -12,20 +12,18 @@ icono-tile, dropzones de Inicio, mosaicos de resumen y colores por
 variables (tema claro/oscuro automatico).
 """
 
-import glob
 import html
 import os
-import re
 import shutil
 import uuid
 import zipfile
 
 from fastapi import File, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import HTMLResponse
 
 from auto_prizma.auditor.procesar import ejecutar_auditoria
 from auto_prizma.core.application import app
-from auto_prizma.core.config import AUDITORIA_DIR, TEMP_DIR
+from auto_prizma.core.config import TEMP_DIR
 from auto_prizma.web.icons import icon
 from auto_prizma.web.layout import render_page
 from auto_prizma.web.views import _archivo_listo
@@ -106,28 +104,6 @@ def _cabecera(acciones=""):
 # PAGINA
 # ============================================================
 
-def _historial_auditorias():
-    if not os.path.isdir(AUDITORIA_DIR):
-        return ""
-    rutas = sorted(
-        glob.glob(os.path.join(AUDITORIA_DIR, "auditoria_*.md")),
-        reverse=True,
-    )[:10]
-    if not rutas:
-        return ""
-    items = ""
-    for ruta in rutas:
-        nombre = os.path.basename(ruta)
-        fecha = _e(nombre[len("auditoria_"):-len(".md")].rsplit("_", 1)[0])
-        items += (
-            '<li><a href="/auditor/reporte/' + _e(nombre) + '">'
-            + icon("descargar") + "Auditoría " + fecha + "</a></li>"
-        )
-    return (
-        '<section class="panel aud-panel"><h2>Auditorías anteriores</h2>'
-        '<ul class="aud-historial">' + items + "</ul></section>"
-    )
-
 
 def _campo(id_input, titulo, pista, nombre_icono, requerido, aceptar):
     return (
@@ -150,7 +126,7 @@ def _campo(id_input, titulo, pista, nombre_icono, requerido, aceptar):
     )
 
 
-def _pagina_formulario(error="", advertencias=()):
+def _pagina_formulario(error="", advertencias=(), active="auditor", action="/auditor"):
     aviso = ""
     if error:
         aviso = (
@@ -172,7 +148,7 @@ def _pagina_formulario(error="", advertencias=()):
     contenido = (
         _cabecera()
         + aviso
-        + '<form class="panel aud-formulario" method="post" action="/auditor" '
+        + '<form class="panel aud-formulario" method="post" action="' + action + '" '
         'enctype="multipart/form-data">'
         '<div class="aud-campos">'
         + _campo(
@@ -197,18 +173,17 @@ def _pagina_formulario(error="", advertencias=()):
         '<button class="boton" type="submit">' + icon("escudo")
         + "Auditar</button>"
         "</form>"
-        + _historial_auditorias()
     )
     return render_page(
         "Auditor de recursos",
         contenido,
-        active="auditor",
+        active=active,
         page_css=_CSS,
         page_js=_JS,
     )
 
 
-def _pagina_resultado(res, nombre_matriz):
+def _pagina_resultado(res, nombre_matriz, active="auditor", action="/auditor"):
     conteo = res["conteo"]
     corregir = [
         r for r in res["resultados"] if r["estado"] in ("alerta", "faltante")
@@ -219,10 +194,7 @@ def _pagina_resultado(res, nombre_matriz):
     ]
 
     acciones = (
-        '<a class="boton" href="/auditor/reporte/'
-        + _e(os.path.basename(res["reporte_md"])) + '">'
-        + icon("descargar") + "Descargar reporte (.md)</a>"
-        '<a class="boton secundario" href="/auditor">' + icon("girar")
+        '<a class="boton secundario" href="' + action + '">' + icon("girar")
         + "Nueva auditoría</a>"
     )
 
@@ -232,8 +204,7 @@ def _pagina_resultado(res, nombre_matriz):
             '<span class="icono-tile">' + icon("alerta-circulo") + "</span>"
             "<div><strong>" + str(len(corregir)) + "</strong>"
             "<b>recurso(s) por corregir</b>"
-            "<small>Revisa las alertas y los faltantes; el reporte completo "
-            "se puede descargar arriba.</small></div></div>"
+            "<small>Revisa las alertas y los faltantes indicados abajo.</small></div></div>"
         )
     else:
         veredicto = (
@@ -337,7 +308,7 @@ def _pagina_resultado(res, nombre_matriz):
         else:
             cuerpo = (
                 str(sy.get("avisos", 0))
-                + " aviso(s): revisa el reporte para el detalle."
+                + " aviso(s): revisa las filas de la auditoría para el detalle."
             )
             clase, ico = "ambar", "alerta"
         syllabus = (
@@ -358,7 +329,7 @@ def _pagina_resultado(res, nombre_matriz):
     return render_page(
         "Auditor de recursos",
         contenido,
-        active="auditor",
+        active=active,
         page_css=_CSS,
         page_js=_JS,
     )
@@ -410,7 +381,7 @@ _CSS = r"""
 .archivo-listo-texto small { display: block; margin-top: 2px; font-size: 13.5px; color: var(--muted); }
 .icono-listo { width: 28px; height: 28px; }
 .icono-listo circle { fill: var(--verde); stroke: var(--verde); }
-.icono-listo path { stroke: #ffffff; stroke-width: 2.4; }
+.icono-listo path { stroke: var(--boton-texto); stroke-width: 2.4; }
 .archivo-listo .boton-icono { border-left: 1px solid var(--borde); border-radius: 0 10px 10px 0; }
 
 /* Resultado */
@@ -518,11 +489,15 @@ async def auditar_curso(
     recursos: UploadFile = File(...),
     syllabus: UploadFile | None = File(default=None),
 ):
+    return await _auditar_archivos(matriz, recursos, syllabus)
+
+
+async def _auditar_archivos(matriz, recursos, syllabus, *, active="auditor", action="/auditor"):
     nombre_matriz = os.path.basename(matriz.filename or "matriz.csv")
     if not nombre_matriz.lower().endswith((".csv", ".txt")):
         return _pagina_formulario(
             error="La matriz debe ser un CSV. Si es de Excel: "
-            "Archivo → Guardar como → CSV UTF-8."
+            "Archivo → Guardar como → CSV UTF-8.", active=active, action=action
         )
 
     texto_matriz = (await matriz.read()).decode("utf-8-sig", errors="replace")
@@ -535,13 +510,13 @@ async def auditar_curso(
             shutil.copyfileobj(recursos.file, fh)
         if not zipfile.is_zipfile(ruta_zip):
             return _pagina_formulario(
-                error="El archivo de recursos no es un ZIP válido."
+                error="El archivo de recursos no es un ZIP válido.", active=active, action=action
             )
         syllabus_bytes = await syllabus.read() if syllabus else None
         res = ejecutar_auditoria(
             ruta_zip,
             None,
-            AUDITORIA_DIR,
+            None,
             matriz_texto=texto_matriz,
             matriz_nombre=nombre_matriz,
             syllabus=syllabus_bytes,
@@ -556,19 +531,22 @@ async def auditar_curso(
         return _pagina_formulario(
             error=res.get("error") or "Error desconocido al auditar.",
             advertencias=res.get("advertencias") or [],
+            active=active, action=action,
         )
-    return _pagina_resultado(res, nombre_matriz)
+    return _pagina_resultado(res, nombre_matriz, active=active, action=action)
 
 
-@app.get("/auditor/reporte/{nombre}", response_class=HTMLResponse)
-def descargar_reporte(nombre):
-    if re.fullmatch(r"auditoria_[0-9_]+\.md", nombre or "") is None:
-        return HTMLResponse("Reporte no encontrado", status_code=404)
-    ruta = os.path.join(AUDITORIA_DIR, nombre)
-    if not os.path.isfile(ruta):
-        return HTMLResponse("Reporte no encontrado", status_code=404)
-    return FileResponse(
-        ruta,
-        media_type="text/markdown; charset=utf-8",
-        filename=nombre,
+@app.get("/moodle-auditor", response_class=HTMLResponse)
+def pagina_auditor_moodle():
+    return _pagina_formulario(active="moodle-auditor", action="/moodle-auditor")
+
+
+@app.post("/moodle-auditor", response_class=HTMLResponse)
+async def auditar_curso_moodle(
+    matriz: UploadFile = File(...),
+    recursos: UploadFile = File(...),
+    syllabus: UploadFile | None = File(default=None),
+):
+    return await _auditar_archivos(
+        matriz, recursos, syllabus, active="moodle-auditor", action="/moodle-auditor"
     )

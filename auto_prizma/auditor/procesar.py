@@ -139,15 +139,29 @@ EXT_POR_TIPO = {
     "infografia": ".h5p",
     "pdf": ".pdf",
     "reto evaluativo": ".pdf",
+    # Videos e imágenes también se auditan: toda fila con enlace debe tener su archivo.
+    "video a camara": "video",
+    "video intro": "video",
+    "video cierre": "video",
+    "video": "video",
+    "imagen": "imagen",
 }
 
-# Tipos que no se auditan (videos .webm grabados, u otros que no son H5P/PDF).
-TIPOS_FUERA_DE_ALCANCE = {
-    "video a camara",
-    "video intro",
-    "video cierre",
-    "imagen",
+# Familias de extensiones aceptadas para los tipos que no tienen una sola extensión.
+EXTS_POR_FAMILIA = {
+    "video": (".webm", ".mp4", ".mov", ".m4v", ".mkv", ".avi"),
+    "imagen": (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"),
 }
+
+# Ningún tipo queda fuera de la auditoría: se auditan todas las filas con enlace.
+TIPOS_FUERA_DE_ALCANCE = set()
+
+
+def ext_coincide(ext, esperada):
+    """True si la extensión del archivo corresponde a la esperada (o a su familia)."""
+    if esperada in EXTS_POR_FAMILIA:
+        return (ext or "").lower() in EXTS_POR_FAMILIA[esperada]
+    return ext == esperada
 
 
 def detectar_columnas(fila):
@@ -259,10 +273,18 @@ def _parsear_filas_matriz(filas):
             tema_actual = celda_nombre
             continue
 
-        # Fila de recurso real: tiene categoría OVI/OVA/CHALLENGE.
+        # Fila de recurso real: tiene categoría OVI/OVA/CHALLENGE o, aunque no la
+        # tenga, trae algo en la columna Enlace (toda fila con enlace se audita).
         cat_norm = normalizar(celda_cat)
-        if cat_norm not in ("ovi", "ova", "challenge"):
+        if cat_norm not in ("ovi", "ova", "challenge") and not celda_enlace:
             continue
+        if cat_norm not in ("ovi", "ova", "challenge"):
+            advertencias.append(
+                f"Fila {num}: «{celda_nombre or celda_enlace}» tiene enlace pero no categoría "
+                "OVI/OVA/CHALLENGE; se audita igual.")
+
+        if not celda_nombre:
+            advertencias.append(f"Fila {num}: falta el nombre del recurso en la matriz.")
 
         tipo_norm = normalizar(celda_tipo)
         ext_esperada = EXT_POR_TIPO.get(tipo_norm, "")
@@ -439,6 +461,10 @@ def emparejar(recursos, archivos):
     avisos = []
 
     for rec in recursos:
+        if not str(rec.get("nombre") or "").strip():
+            resultados.append({**rec, "estado": "alerta", "archivo": None,
+                               "detalle": "El nombre del recurso está vacío en la matriz."})
+            continue
         if rec["fuera_de_alcance"]:
             # Aun fuera de alcance, consumimos el archivo si coincide por nombre
             # (los videos traen su nombre real en la columna "enlace").
@@ -469,9 +495,13 @@ def emparejar(recursos, archivos):
         # 1) Candidatos con la extensión correcta (o cualquiera si no hay tipo declarado).
         candidatos = [a for a in archivos
                       if not a["usado"] and a["clave"] and
-                      (sin_tipo or a["ext"] == esperada)]
+                      (sin_tipo or ext_coincide(a["ext"], esperada))]
 
         exactos = [a for a in candidatos if a["clave"] == clave_titulo]
+        if not exactos and esperada in EXTS_POR_FAMILIA and rec.get("enlace"):
+            # Videos/imágenes: la columna Enlace suele traer el nombre real del archivo.
+            clave_enlace = clave(os.path.splitext(rec["enlace"])[0])
+            exactos = [a for a in candidatos if clave_enlace and a["clave"] == clave_enlace]
         truncados = [a for a in candidatos
                      if a["clave"] != clave_titulo and es_inicio_exacto(a["clave"], clave_titulo)]
 
@@ -507,9 +537,10 @@ def emparejar(recursos, archivos):
                         detalle = (f'el título interno NO coincide con la matriz. '
                                    f'Interno="{titulo_int}" vs Matriz="{rec["nombre"]}"'
                                    + aviso_titulo_envuelto(principal, clave_titulo))
-
-            # Si el archivo está dentro de una subcarpeta, decirlo en el detalle
-            # (se busca en todas las subcarpetas, pero conviene saberlo).
+            # La alerta de nombre se basa en comparar el título de h5p.json con
+            # el nombre del recurso de la matriz. La portada/contenido y la
+            # ubicación del archivo no cambian ese resultado.
+            # Si el archivo está dentro de una subcarpeta, se informa como nota.
             sub = os.path.dirname(principal.get("rel", "") or "")
             if sub:
                 detalle += f"; el archivo está dentro de la subcarpeta «{sub}»"
@@ -574,7 +605,8 @@ def emparejar(recursos, archivos):
             mala = otros_ext[0]
             mala["usado"] = True
             resultados.append({**rec, "estado": "alerta", "archivo": mala["nombre"],
-                               "detalle": (f"extensión incorrecta: se esperaba '{esperada}' "
+                               "detalle": (f"extensión incorrecta: se esperaba "
+                                           f"'{'/'.join(EXTS_POR_FAMILIA.get(esperada, (esperada,)))}' "
                                            f"pero se encontró '{mala['ext']}'")})
             continue
 
@@ -687,6 +719,8 @@ def verificar_abre(nombre, ext, ruta=None, titulo=None, titulo_error=None):
     `estado` es "ok" o "error". Si `ruta` es None (archivo leído por el navegador)
     y no vienen titulo/titulo_error, se asume "ok" y se marca como presente.
     """
+    if ruta and os.path.isfile(ruta) and os.path.getsize(ruta) <= 0:
+        return "error", "el archivo está vacío (0 bytes)"
     if ext == ".h5p":
         if titulo_error:
             return "error", f"no se pudo leer: {titulo_error}"
@@ -1360,7 +1394,7 @@ def ejecutar_auditoria(origen, matriz, salida="resultados",
     - `matriz_nombre` (opcional): nombre del CSV para cruzar el nombre del curso
       del syllabus (en la CLI se deduce de la ruta `matriz`).
     - No modifica los archivos originales.
-    - Escribe el reporte .md y .json en la carpeta `salida`.
+    - Escribe el reporte .md y .json en `salida` si se indica; con `None`, no persiste reportes.
     """
     carpeta_temp = None
     try:
@@ -1422,23 +1456,25 @@ def ejecutar_auditoria(origen, matriz, salida="resultados",
                                   extensiones, total_archivos, archivos_detalle,
                                   syllabus=res_syllabus)
 
-        os.makedirs(salida, exist_ok=True)
-        # Milisegundos en el nombre: dos auditorías en el mismo segundo no se pisan.
-        ahora = datetime.now()
-        marca = ahora.strftime("%Y%m%d_%H%M%S_") + f"{ahora.microsecond // 1000:03d}"
-        destino_md = os.path.join(salida, f"auditoria_{marca}.md")
-        destino_json = os.path.join(salida, f"auditoria_{marca}.json")
-        with open(destino_md, "w", encoding="utf-8") as fh:
-            fh.write(reporte)
-        with open(destino_json, "w", encoding="utf-8") as fh:
-            json.dump({"resultados": resultados,
-                       "huerfanos": [a["rel"] for a in huerfanos],
-                       "advertencias": advertencias,
-                       "extensiones": extensiones,
-                       "total_archivos": total_archivos,
-                       "archivos_detalle": archivos_detalle,
-                       "syllabus": res_syllabus},
-                      fh, ensure_ascii=False, indent=2)
+        destino_md = destino_json = None
+        if salida is not None:
+            os.makedirs(salida, exist_ok=True)
+            # Milisegundos en el nombre: dos auditorías en el mismo segundo no se pisan.
+            ahora = datetime.now()
+            marca = ahora.strftime("%Y%m%d_%H%M%S_") + f"{ahora.microsecond // 1000:03d}"
+            destino_md = os.path.join(salida, f"auditoria_{marca}.md")
+            destino_json = os.path.join(salida, f"auditoria_{marca}.json")
+            with open(destino_md, "w", encoding="utf-8") as fh:
+                fh.write(reporte)
+            with open(destino_json, "w", encoding="utf-8") as fh:
+                json.dump({"resultados": resultados,
+                           "huerfanos": [a["rel"] for a in huerfanos],
+                           "advertencias": advertencias,
+                           "extensiones": extensiones,
+                           "total_archivos": total_archivos,
+                           "archivos_detalle": archivos_detalle,
+                           "syllabus": res_syllabus},
+                          fh, ensure_ascii=False, indent=2)
 
         conteo = {"ok": 0, "alerta": 0, "faltante": 0, "fuera-de-alcance": 0}
         for r in resultados:
@@ -1456,9 +1492,9 @@ def ejecutar_auditoria(origen, matriz, salida="resultados",
             "total_archivos": total_archivos,
             "archivos_detalle": archivos_detalle,
             "syllabus": res_syllabus,
-            "reporte_md": os.path.abspath(destino_md),
-            "reporte_json": os.path.abspath(destino_json),
-            "salida": os.path.abspath(salida),
+            "reporte_md": os.path.abspath(destino_md) if destino_md else None,
+            "reporte_json": os.path.abspath(destino_json) if destino_json else None,
+            "salida": os.path.abspath(salida) if salida is not None else None,
         }
     finally:
         if carpeta_temp and os.path.isdir(carpeta_temp):
