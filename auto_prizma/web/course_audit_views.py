@@ -206,7 +206,14 @@ def render_moodle_audit_page(
             "<label>Enlace del curso en Moodle"
             '<input type="url" name="course_url" placeholder="https://prizma.americana.edu.co/course/view.php?id=695" required></label>'
             "<label>Matriz de referencia (opcional, CSV o XLSX)"
-            '<input type="file" name="matriz" accept=".csv,.xlsx"></label>'
+            '<span class="moodle-label-file auditoria-matriz-drop">'
+            + icon("subir")
+            + '<strong>Adjunta la matriz de referencia</strong>'
+            + '<small>Archivo .csv o .xlsx · opcional</small>'
+            + '<span class="boton secundario moodle-label-file-button">Seleccionar archivo</span>'
+            + '<span class="moodle-label-file-name" data-matriz-nombre>Ningún archivo seleccionado</span>'
+            + '<input id="auditoria-matriz" type="file" name="matriz" accept=".csv,.xlsx">'
+            + "</span></label>"
             "</div>"
             '<p class="form-pista">La matriz solo se usa para comparar semana y nombre del recurso con lo publicado. No adjuntes el syllabus; no se solicita ni descarga.</p>'
             '<div class="form-acciones">'
@@ -226,7 +233,7 @@ def render_moodle_audit_page(
         )
         return render_page(
             "Auditar curso Moodle", contenido, active="moodle-auditor-curso",
-            page_css=_CSS_AUDITORIA,
+            page_css=_CSS_AUDITORIA, page_js=_JS_AUDITORIA_FORM,
         )
 
     progreso = job.get("progress") or {}
@@ -319,13 +326,25 @@ _CSS_AUDITORIA = r"""
 .auditoria-paso p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .auditoria-form { padding: 24px; display: grid; gap: 16px; }
 .auditoria-form h2 { margin: 0; font-size: 19px; font-weight: 800; }
-.auditoria-form .form-fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; }
+.auditoria-form .form-fila { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; align-items: start; }
 .auditoria-form label { display: grid; gap: 7px; font-size: 13px; font-weight: 700; color: var(--texto-2); }
 .auditoria-form input:not([type="checkbox"]), .auditoria-form select { min-height: 44px; width: 100%; padding: 10px 13px; border: 1px solid var(--borde); border-radius: 11px; background: var(--panel-2); color: var(--texto); font-size: 14px; }
+.auditoria-form label > input[type="url"] { align-self: start; height: 48px; box-sizing: border-box; }
 .auditoria-form input:focus, .auditoria-form select:focus { outline: 2px solid var(--acento); outline-offset: 1px; }
 .auditoria-form .auditoria-recordar { display: flex; align-items: center; gap: 9px; width: fit-content; margin: 0; cursor: pointer; }
 .auditoria-form .auditoria-recordar input[type="checkbox"] { appearance: auto; accent-color: var(--acento); width: 17px; height: 17px; min-height: 17px; margin: 0; padding: 0; border: 0; box-shadow: none; }
 .auditoria-form .form-acciones { display: flex; gap: 10px; flex-wrap: wrap; }
+.auditoria-matriz-drop { display:grid!important; grid-template-columns:36px minmax(0,1fr) auto; grid-template-rows:auto auto auto; align-items:center; justify-items:start; gap:3px 12px; width:100%; min-height:78px; box-sizing:border-box; margin-top:7px; padding:12px 16px; border:2px dashed var(--acento-borde); border-radius:12px; background:var(--panel-2); text-align:left; cursor:pointer; transition:border-color .15s,background .15s; }
+.auditoria-matriz-drop:hover { border-color:var(--acento); background:var(--acento-suave); }
+.auditoria-matriz-drop > .icono { grid-column:1; grid-row:1/4; width:26px; height:26px; color:var(--acento-texto); }
+.auditoria-matriz-drop > strong { grid-column:2; grid-row:1; font-size:13px; color:var(--texto); }
+.auditoria-matriz-drop > small { grid-column:2; grid-row:2; color:var(--muted); font-size:11px; }
+.auditoria-matriz-drop > .moodle-label-file-button { grid-column:3; grid-row:1/3; justify-self:end; white-space:nowrap; }
+.auditoria-matriz-drop .moodle-label-file-name { max-width:100%; color:var(--muted); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.auditoria-matriz-drop > .moodle-label-file-name { grid-column:2/4; grid-row:3; }
+.auditoria-matriz-drop input[type=file] { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); clip-path:inset(50%); white-space:nowrap; border:0; }
+.auditoria-matriz-drop:focus-within { outline:3px solid var(--foco); outline-offset:3px; }
+@media (max-width:600px) { .auditoria-matriz-drop { grid-template-columns:28px minmax(0,1fr); } .auditoria-matriz-drop > .moodle-label-file-button { grid-column:2; grid-row:3; justify-self:start; margin-top:6px; } .auditoria-matriz-drop > .moodle-label-file-name { grid-column:2; grid-row:4; } .auditoria-matriz-drop > .icono { grid-row:1/3; } }
 .form-pista { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
 .auditoria-progreso { padding: 22px 24px; display: grid; gap: 14px; }
 .auditoria-progreso-cab { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
@@ -402,6 +421,17 @@ _JS_AUDITORIA = r"""
     }catch(_){window.setTimeout(poll,3000);}
   }
   poll();
+})();
+"""
+
+_JS_AUDITORIA_FORM = r"""
+(function(){
+  var input=document.getElementById('auditoria-matriz');
+  var name=document.querySelector('[data-matriz-nombre]');
+  if(!input||!name)return;
+  input.addEventListener('change',function(){
+    name.textContent=input.files&&input.files.length?input.files[0].name:'Ningún archivo seleccionado';
+  });
 })();
 """
 

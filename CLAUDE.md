@@ -20,6 +20,8 @@ En la auditoría PRIZMA, las acciones de Programas y selección de curso adoptan
 
 La auditoría Moodle reutiliza una pestaña para los recursos y captura los eventos de descarga directa; valida PDFs descargados con la sesión activa para no confundir una descarga iniciada con un recurso que agotó el tiempo de apertura.
 
+El selector opcional de matriz de la auditoría Moodle usa el mismo componente visual de carga de archivos que el resto de la app (dropzone temática, botón y nombre del archivo), no el control nativo sin estilo del navegador. En el formulario se mantiene compacto y los campos se alinean arriba para que la dropzone no estire el enlace del curso.
+
 En la auditoría Moodle, el enlace debe ser HTTPS de `prizma.americana.edu.co/course/view.php` e incluir un `id` numérico; otras rutas, hosts o enlaces sin ID se rechazan antes de abrir Chromium.
 
 En uso local no hay cuentas de Auto Prizma: las peticiones loopback usan la identidad fija `local` y acceden directamente. Los despliegues remotos conservan usuarios autenticados y separación de datos por cuenta.

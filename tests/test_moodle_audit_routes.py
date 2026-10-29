@@ -90,6 +90,10 @@ def test_formulario_y_puerta_local(monkeypatch, tmp_path):
     assert 'name="course_url"' in pagina.text
     assert 'name="matriz"' in pagina.text
     assert "No adjuntes el syllabus" in pagina.text
+    assert "auditoria-matriz-drop" in pagina.text
+    assert "Seleccionar archivo" in pagina.text
+    assert "align-items: start" in pagina.text
+    assert "grid-template-columns:36px minmax(0,1fr) auto" in pagina.text
     assert 'name="usuario"' not in pagina.text
     assert 'name="contrasena"' not in pagina.text
     assert "Chromium visible" in pagina.text
