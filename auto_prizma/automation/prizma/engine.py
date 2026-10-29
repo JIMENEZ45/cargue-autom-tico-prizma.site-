@@ -50,6 +50,12 @@ from auto_prizma.automation.prizma.html_field import (  # noqa: E402
     normalizar_saltos,
     quitar_archivo_de_recurso,
 )
+from auto_prizma.automation.content_checks import (  # noqa: E402
+    ESTADO_OK,
+    evaluar_recurso_auditoria,
+    inspeccionar_h5p_archivo,
+    inspeccionar_pdf_bytes,
+)
 from auto_prizma.services.course_state import (  # noqa: E402
     registrar_resultado_actividad,
 )
@@ -4278,6 +4284,7 @@ def iniciar_sesion_prizma(
     pagina,
     usuario_prizma,
     contrasena_prizma,
+    abrir_actividades=True,
 ):
 
     print()
@@ -4392,6 +4399,11 @@ def iniciar_sesion_prizma(
         "URL después del login:",
         pagina.url,
     )
+
+    # La auditoría primero debe seleccionar el curso desde Programas. El
+    # cargue tradicional conserva su navegación automática a Actividades.
+    if not abrir_actividades:
+        return True
 
     # --------------------------------------------------------
     # ENTRAR A ACTIVIDADES
@@ -5910,6 +5922,759 @@ def _inspeccionar_h5p_montado(pagina, fila, actividad):
                     os.remove(ruta_temporal)
                 except OSError:
                     pass
+
+
+# ============================================================
+# AUDITORIA DE CURSO COMPLETO (SOLO LECTURA, SIN MATRIZ)
+# ============================================================
+
+# Las filas del listado son contenedores con exactamente 3 botones (misma
+# heuristica que encontrar_fila_desde_elemento). Cada fila mas interna se
+# etiqueta con un id efimero para poder volver a abrirla tras inspeccionar
+# sus hermanas.
+_JS_ENUMERAR_FILAS = """
+() => {
+    const candidatos = document.querySelectorAll('*');
+    const filas = [];
+    for (const el of candidatos) {
+        if (el.querySelectorAll('button').length !== 3) continue;
+        let interno = true;
+        for (const hijo of el.querySelectorAll('*')) {
+            if (hijo.querySelectorAll('button').length === 3) {
+                interno = false;
+                break;
+            }
+        }
+        if (!interno) continue;
+        if (!el.dataset.prizmaScanId) {
+            el.dataset.prizmaScanId =
+                "scan-" + Math.random().toString(36).slice(2);
+        }
+        filas.push({
+            id: el.dataset.prizmaScanId,
+            texto: el.innerText || el.textContent || "",
+        });
+    }
+    return filas;
+}
+"""
+
+
+def enumerar_actividades_curso(pagina):
+    """Todas las filas del listado actual (una categoria abierta).
+
+    Returns:
+        [{"scan_id", "nombre"}] en el orden en que PRIZMA las muestra.
+    """
+    try:
+        datos = pagina.evaluate(_JS_ENUMERAR_FILAS)
+    except Exception:
+        return []
+
+    filas = []
+    for item in datos or []:
+        nombre = obtener_nombre_fila(str(item.get("texto") or ""))
+        if nombre:
+            filas.append({"scan_id": str(item.get("id") or ""), "nombre": nombre})
+    return filas
+
+
+def encontrar_fila_escaneada(pagina, scan_id):
+    """Recupera una fila por su id de escaneo (None si ya no esta en pantalla)."""
+    if not scan_id:
+        return None
+    try:
+        fila = pagina.locator(
+            '[data-prizma-scan-id="' + scan_id + '"]'
+        ).first
+        fila.wait_for(state="visible", timeout=5000)
+        return fila
+    except Exception:
+        return None
+
+
+def auditar_actividad_curso(pagina, fila, nombre_actividad):
+    """Abre UNA actividad en modo lectura y valida su recurso adjunto.
+
+    No modifica nada: entra a la edicion, lee el campo Recurso, baja el
+    archivo (mismo boton de vista previa/descarga que usa la verificacion)
+    y lo valida en profundidad: PDF con hojas y contenido; H5P con paquete
+    valido, bibliotecas y titulo interno igual al nombre del curso.
+
+    Returns:
+        {"estado", "tipo", "archivo", "titulo_interno", "coincide", "detalle"}
+    """
+    if not abrir_edicion(pagina, fila):
+        return {
+            "estado": "no_se_pudo",
+            "tipo": "",
+            "archivo": "",
+            "titulo_interno": "",
+            "coincide": None,
+            "detalle": "No se pudo abrir la actividad para revisarla.",
+        }
+
+    ruta_temporal = ""
+    try:
+        nombre_archivo = archivo_en_recurso(pagina)
+        if not nombre_archivo:
+            return evaluar_recurso_auditoria(nombre_actividad, "", None)
+
+        tarjeta = pagina.locator(XPATH_TARJETA_ARCHIVO_RECURSO)
+        botones = tarjeta.locator("button")
+        if botones.count() < 1:
+            return evaluar_recurso_auditoria(nombre_actividad, "", None)
+
+        extension = (
+            "." + nombre_archivo.rsplit(".", 1)[-1].lower()
+            if "." in nombre_archivo else ".bin"
+        )
+        descriptor, ruta_temporal = tempfile.mkstemp(
+            suffix=extension, prefix="prizma_auditoria_"
+        )
+        os.close(descriptor)
+        try:
+            with pagina.expect_download(timeout=12000) as descarga_info:
+                botones.first.click(timeout=5000)
+            descarga_info.value.save_as(ruta_temporal)
+        except Exception:
+            return {
+                "estado": "no_se_pudo",
+                "tipo": "",
+                "archivo": nombre_archivo,
+                "titulo_interno": "",
+                "coincide": None,
+                "detalle": (
+                    "Se encontró " + nombre_archivo
+                    + ", pero PRIZMA no permitió descargarlo para validarlo."
+                ),
+            }
+
+        if extension == ".h5p":
+            inspeccion = inspeccionar_h5p_archivo(ruta_temporal)
+        elif extension == ".pdf":
+            with open(ruta_temporal, "rb") as fh:
+                inspeccion = inspeccionar_pdf_bytes(fh.read())
+        else:
+            inspeccion = None
+
+        return evaluar_recurso_auditoria(nombre_actividad, nombre_archivo, inspeccion)
+    except Exception as error:
+        print("No se pudo auditar la actividad:", type(error).__name__)
+        return {
+            "estado": "no_se_pudo",
+            "tipo": "",
+            "archivo": "",
+            "titulo_interno": "",
+            "coincide": None,
+            "detalle": "No se pudo revisar la actividad (error inesperado).",
+        }
+    finally:
+        try:
+            cancelar_edicion_segura(pagina)
+        finally:
+            if ruta_temporal:
+                try:
+                    os.remove(ruta_temporal)
+                except OSError:
+                    pass
+
+
+def _seleccionar_pestana_programa_prizma(pagina, nombre="Programa"):
+    """Activa la pestaña solicitada por su texto visible exacto."""
+    nombres = ("Programa", "Programas") if nombre.casefold() == "programa" else (nombre,)
+    patron = re.compile(
+        r"^\s*(?:" + "|".join(re.escape(item) for item in nombres) + r")\s*$",
+        re.I,
+    )
+    for selector in ("label.tab", "[role='tab']", ".tab", "label", "button", "a"):
+        try:
+            pestañas = pagina.locator(selector).filter(has_text=patron)
+            for indice in range(pestañas.count()):
+                pestaña = pestañas.nth(indice)
+                if pestaña.is_visible():
+                    pestaña.click(timeout=10000)
+                    pagina.wait_for_timeout(800)
+                    return True
+        except Exception:
+            continue
+    # Respaldo para pestañas custom que no exponen role ni clase conocida.
+    try:
+        activada = pagina.evaluate(
+            """(nombre) => {
+              const norm = s => String(s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+              const selectores = ['label.tab', '[role="tab"]', '.tab', 'label', 'button', 'a'];
+              const nombres = nombre.toLowerCase() === 'programa' ? ['programa', 'programas'] : [nombre.toLowerCase()];
+              for (const selector of selectores) {
+                const elementos = Array.from(document.querySelectorAll(selector));
+                const elemento = elementos.find(el => nombres.includes(norm(el.innerText || el.textContent))
+                  && el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden');
+                if (elemento) { elemento.click(); return true; }
+              }
+              return false;
+            }""",
+            nombre,
+        )
+        if activada:
+            pagina.wait_for_timeout(800)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _adoptar_pestana_abierta(pagina, paginas_previas, espera_ms=1500):
+    """Si la acción abrió una pestaña nueva, continúa el flujo allí."""
+    try:
+        contexto = pagina.context
+        anteriores = set(paginas_previas or [])
+        limite = max(1, int(espera_ms / 100))
+        for intento in range(limite):
+            nuevas = [p for p in contexto.pages if p not in anteriores and not p.is_closed()]
+            if nuevas:
+                nueva = nuevas[-1]
+                try:
+                    nueva.wait_for_load_state("domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
+                return nueva
+            if intento < limite - 1:
+                pagina.wait_for_timeout(100)
+    except Exception:
+        pass
+    return pagina
+
+
+def seleccionar_curso_prizma(pagina, curso_prizma):
+    """Navega Programas → Pensum → Nivel → Asignatura y abre Vista previa."""
+    curso = curso_prizma if isinstance(curso_prizma, dict) else {}
+    requeridos = ("programa", "pensum", "nivel", "asignatura")
+    faltantes = [nombre for nombre in requeridos if not str(curso.get(nombre) or "").strip()]
+    if faltantes:
+        raise ValueError("Faltan datos para identificar el curso: " + ", ".join(faltantes) + ".")
+
+    from auto_prizma.auditor.procesar import clave
+
+    def normalizar(texto):
+        return clave(str(texto or ""))
+
+    def contiene_codigo(texto, codigo):
+        """Evita que un código corto coincida como subcadena de otro código."""
+        codigo_n = normalizar(codigo)
+        texto_n = normalizar(texto)
+        if not codigo_n:
+            return False
+        return re.search(
+            r"(?<![\w])" + re.escape(codigo_n) + r"(?![\w])",
+            texto_n,
+        ) is not None
+
+    def diagnostico_pestanas():
+        try:
+            detectadas = pagina.evaluate(
+                """() => Array.from(document.querySelectorAll('label.tab,[role="tab"],.tab'))
+                  .filter(el => el.getClientRects().length && getComputedStyle(el).visibility !== 'hidden')
+                  .map(el => ({
+                    texto: String(el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim(),
+                    clase: String(el.className || ''),
+                    seleccionada: el.getAttribute('aria-selected') || el.getAttribute('aria-checked') || ''
+                  }))
+                  .filter(item => item.texto && item.texto.length < 80)
+                  .slice(0, 12)"""
+            ) or []
+            if detectadas:
+                return "Pestañas/controles visibles: " + "; ".join(
+                    item["texto"] + (" (seleccionada)" if item.get("seleccionada") == "true" else "")
+                    for item in detectadas
+                )
+        except Exception:
+            pass
+        return "No se pudieron leer las pestañas visibles de PRIZMA."
+
+    def pulsar_texto(texto):
+        nonlocal pagina
+        # PRIZMA construye sus tarjetas de inicio con contenedores div y no
+        # siempre asigna role=button. El click en el texto burbujea al handler.
+        try:
+            candidatos = pagina.get_by_text(texto, exact=True)
+            for indice in range(candidatos.count()):
+                elemento = candidatos.nth(indice)
+                if elemento.is_visible():
+                    try:
+                        paginas_previas = list(pagina.context.pages)
+                    except Exception:
+                        paginas_previas = []
+                    elemento.click(timeout=10000)
+                    pagina.wait_for_timeout(1000)
+                    pagina = _adoptar_pestana_abierta(pagina, paginas_previas)
+                    return True
+        except Exception:
+            pass
+        # Respaldo para tarjetas custom cuyo texto visible incluye otros hijos.
+        try:
+            try:
+                paginas_previas = list(pagina.context.pages)
+            except Exception:
+                paginas_previas = []
+            clic = pagina.evaluate(
+                """(texto) => {
+                  const norm = s => String(s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+                  const candidatos = Array.from(document.querySelectorAll('a,button,[role=button],div,span,p'))
+                    .filter(el => norm(el.innerText || el.textContent) === norm(texto));
+                  candidatos.sort((a,b) => a.querySelectorAll('*').length - b.querySelectorAll('*').length);
+                  if (!candidatos.length) return false;
+                  candidatos[0].click(); return true;
+                }""",
+                texto,
+            )
+            if clic:
+                pagina.wait_for_timeout(1000)
+                pagina = _adoptar_pestana_abierta(pagina, paginas_previas)
+                return True
+        except Exception:
+            pass
+        return False
+
+    selector_filas = "table tbody tr, [role='row'], .MuiDataGrid-row, .ant-table-row"
+
+    def esperar_tabla(titulo, requiere_buscador=True):
+        try:
+            if requiere_buscador:
+                pagina.locator('input[placeholder="Buscar..."], input[placeholder*="Buscar" i]').first.wait_for(
+                    state="visible", timeout=20000
+                )
+            else:
+                pagina.locator(selector_filas).first.wait_for(state="visible", timeout=20000)
+            return
+        except Exception as error:
+            raise RuntimeError("No cargó la lista de " + titulo + " en PRIZMA.") from error
+
+    def fila_coincidente(titulo, busqueda, valida, *, usar_buscador=True, primera=False):
+        esperar_tabla(titulo, requiere_buscador=usar_buscador)
+        if usar_buscador:
+            try:
+                buscador = pagina.locator('input[placeholder="Buscar..."], input[placeholder*="Buscar" i]').first
+                buscador.fill(str(busqueda or ""))
+                pagina.wait_for_timeout(600)
+            except Exception as error:
+                raise RuntimeError("No se pudo buscar en la lista de " + titulo + ".") from error
+
+        filas = pagina.locator(selector_filas)
+        coincidencias = []
+        for indice in range(min(filas.count(), 500)):
+            fila = filas.nth(indice)
+            try:
+                if not fila.is_visible():
+                    continue
+                texto = fila.inner_text(timeout=1500)
+                if valida(texto):
+                    coincidencias.append(fila)
+            except Exception:
+                continue
+        if primera and coincidencias:
+            return coincidencias[0]
+        if len(coincidencias) != 1:
+            extra = " " + diagnostico_pestanas() if titulo == "Programa" else ""
+            raise RuntimeError(
+                "La búsqueda de " + titulo + " encontró " + str(len(coincidencias))
+                + " filas; revisa el código/nombre y que la búsqueda no sea ambigua."
+                + extra
+            )
+        return coincidencias[0]
+
+    def abrir_fila(
+        titulo, busqueda, valida, accion, *, usar_buscador=True, primera=False,
+        tipo_accion="",
+    ):
+        nonlocal pagina
+        fila = fila_coincidente(
+            titulo, busqueda, valida,
+            usar_buscador=usar_buscador,
+            primera=primera,
+        )
+        if tipo_accion == "flecha":
+            por_nombre = fila.locator(
+                'button[aria-label*="siguiente" i], button[title*="siguiente" i], '
+                'button[aria-label*="continuar" i], button[title*="continuar" i], '
+                'button[aria-label*="abrir" i], button[title*="abrir" i], '
+                'button[aria-label*="next" i], button[title*="next" i]'
+            )
+        elif tipo_accion == "ojo":
+            por_nombre = fila.locator(
+                'button[aria-label*="ver" i], button[title*="ver" i], '
+                'button[aria-label*="visualizar" i], button[title*="visualizar" i], '
+                'button[aria-label*="view" i], button[title*="view" i], '
+                'button[aria-label*="preview" i], button[title*="preview" i]'
+            )
+        else:
+            por_nombre = None
+        botones = fila.locator("button")
+        if botones.count() <= accion:
+            raise RuntimeError("La fila seleccionada de " + titulo + " no tiene el botón para continuar.")
+        try:
+            boton = (
+                por_nombre.first
+                if por_nombre is not None and por_nombre.count() > 0
+                else botones.nth(accion)
+            )
+            boton.scroll_into_view_if_needed(timeout=4000)
+            try:
+                paginas_previas = list(pagina.context.pages)
+            except Exception:
+                paginas_previas = []
+            boton.click(timeout=10000)
+            pagina.wait_for_timeout(1200)
+            pagina = _adoptar_pestana_abierta(pagina, paginas_previas)
+        except Exception as error:
+            raise RuntimeError("No se pudo abrir la fila seleccionada de " + titulo + ".") from error
+
+    codigo_programa = str(curso.get("programa") or "").strip()
+    codigo_pensum = str(curso.get("pensum") or "").strip()
+    codigo_asignatura = str(curso.get("codigo_asignatura") or "").strip()
+    nombre_asignatura = str(curso.get("asignatura") or "").strip()
+    # El nombre completo de asignatura incluye el código al inicio.
+    if codigo_asignatura and normalizar(nombre_asignatura).startswith(normalizar(codigo_asignatura)):
+        nombre_asignatura = nombre_asignatura[len(codigo_asignatura):].strip(" -–—")
+
+    if not pulsar_texto("Programas"):
+        raise RuntimeError("No se pudo abrir la tarjeta Programas del inicio de PRIZMA.")
+
+    facultad = str(curso.get("facultad") or "").strip()
+    if facultad:
+        if not _seleccionar_pestana_programa_prizma(pagina, "Facultad"):
+            raise RuntimeError("Se indicó una facultad, pero no se encontró su pestaña en Programas.")
+        abrir_fila(
+            "Facultad",
+            facultad,
+            lambda texto: contiene_codigo(texto, facultad),
+            -1,
+        )
+    else:
+        if not _seleccionar_pestana_programa_prizma(pagina, "Programa"):
+            raise RuntimeError(
+                "No se encontró la pestaña Programa. Como no se indicó facultad, "
+                "no se buscó el código en la pestaña Facultad. "
+                + diagnostico_pestanas()
+            )
+
+    def coincide_programa(texto):
+        return contiene_codigo(texto, codigo_programa)
+
+    # La búsqueda por código de programa devuelve su registro; se avanza por
+    # la flecha de ese primer registro (igual que la navegación manual).
+    abrir_fila(
+        "Programa", codigo_programa, coincide_programa, -1,
+        primera=True, tipo_accion="flecha",
+    )
+    abrir_fila(
+        "Pensum",
+        codigo_pensum,
+        lambda texto: contiene_codigo(texto, codigo_pensum),
+        -1,
+        tipo_accion="flecha",
+    )
+
+    nivel = str(curso.get("nivel") or "").strip()
+    nivel_codigo = nivel
+    variantes_nivel = {
+        "1": "uno", "2": "dos", "3": "tres", "4": "cuatro", "5": "cinco",
+        "6": "seis", "7": "siete", "8": "ocho", "9": "nueve", "10": "diez",
+        "uno": "1", "dos": "2", "tres": "3", "cuatro": "4", "cinco": "5",
+        "seis": "6", "siete": "7", "ocho": "8", "nueve": "9", "diez": "10",
+    }
+    nivel_alterno = variantes_nivel.get(normalizar(nivel), "")
+    abrir_fila(
+        "Nivel de pensum",
+        nivel,
+        lambda texto: (
+            contiene_codigo(texto, nivel)
+            or bool(nivel_alterno and contiene_codigo(texto, nivel_alterno))
+            or contiene_codigo(
+                texto, codigo_programa + "-" + codigo_pensum + "-" + nivel_codigo
+            )
+        ),
+        -1,
+        usar_buscador=False,
+        tipo_accion="flecha",
+    )
+
+    abrir_fila(
+        "Asignatura por pensum",
+        codigo_asignatura or nombre_asignatura,
+        lambda texto: (
+            contiene_codigo(texto, codigo_asignatura)
+            and (not nombre_asignatura or normalizar(nombre_asignatura) in normalizar(texto))
+        ),
+        0,
+        tipo_accion="ojo",
+    )
+
+    try:
+        boton = pagina.get_by_role("button", name=re.compile(r"^\s*Vista previa\s*$", re.I)).last
+        boton.wait_for(state="visible", timeout=20000)
+        boton.scroll_into_view_if_needed(timeout=5000)
+        boton.click(timeout=15000)
+    except Exception as error:
+        raise RuntimeError("No se encontró o no se pudo pulsar Vista previa para la asignatura seleccionada.") from error
+
+    pagina.wait_for_timeout(1800)
+    pestañas = pagina.locator("label.tab")
+    if not any(
+        pestañas.filter(has_text=re.compile(r"^\s*" + nombre + r"\s*$", re.I)).count()
+        for nombre in ("OVI", "OVA", "Retos Evaluativos")
+    ):
+        raise RuntimeError(
+            "PRIZMA no mostró las pestañas del curso después de Vista previa; "
+            "no se auditó ningún curso."
+        )
+    return True
+
+
+def auditar_curso_prizma(
+    usuario_prizma,
+    contrasena_prizma,
+    curso_prizma,
+    estado,
+    categorias=None,
+):
+    """Audita TODO el curso publicado en PRIZMA, sin matriz ni archivos locales.
+
+    El navegador entra con credenciales (headless, como el cargue), busca
+    Programa/Pensum/Nivel/Asignatura en Programas → Asignaturas por Pensum,
+    pulsa Vista previa y enumera las
+    actividades del propio listado y, por cada una, abre su actividad y
+    valida el recurso: que exista, que el PDF tenga hojas y contenido o que
+    el H5P sea un paquete valido con bibliotecas, y que el titulo que se ve
+    al abrirlo sea el nombre que muestra el curso.
+
+    Returns:
+        {"ok", "error", "resultados": [{"categoria", "nombre", "estado",
+        "tipo", "archivo", "titulo_interno", "coincide", "detalle"}]}
+    """
+    if categorias is None:
+        categorias = ("OVI", "OVA", "CHALLENGE")
+
+    actualizar_estado(
+        estado,
+        etapa="login",
+        mensaje="Iniciando sesión en PRIZMA para auditar el curso...",
+        total=0,
+        procesadas=0,
+        exitosas=0,
+        errores=0,
+        terminado=False,
+    )
+
+    resultados = []
+
+    with sync_playwright() as p:
+        navegador = None
+        estado_navegacion = {"categoria_actual": None}
+
+        def abrir_sesion(motivo=""):
+            nonlocal navegador
+            estado_navegacion["categoria_actual"] = None
+            if motivo:
+                print("⚠️ Reiniciando sesión PRIZMA:", motivo)
+            if navegador is not None:
+                try:
+                    navegador.close()
+                except Exception:
+                    pass
+            navegador = p.chromium.launch(
+                headless=str(curso_prizma.get("modo_navegador") or "segundo_plano") != "visual",
+                args=list(CHROMIUM_ARGS),
+            )
+            pagina = navegador.new_page(
+                viewport=dict(VIEWPORT_NAVEGADOR)
+            )
+            iniciar_sesion_prizma(
+                pagina,
+                usuario_prizma,
+                contrasena_prizma,
+                abrir_actividades=False,
+            )
+            return pagina
+
+        try:
+            pagina = _abrir_sesion_inicial(abrir_sesion, estado)
+        except Exception as error:
+            texto = str(error).strip()
+            if navegador is not None:
+                try:
+                    navegador.close()
+                except Exception:
+                    pass
+            if "ERROR_LOGIN_PRIZMA" in texto:
+                marca = "ERROR_LOGIN_PRIZMA"
+            else:
+                marca = "ERROR_CONECTANDO_PRIZMA"
+            return {
+                "ok": False,
+                "error": marca + ": " + (texto.splitlines() or [""])[0][:200],
+                "resultados": resultados,
+            }
+
+        if pagina is None:
+            return {
+                "ok": False,
+                "error": "ERROR_CANCELADO",
+                "resultados": resultados,
+            }
+
+        try:
+            try:
+                seleccionar_curso_prizma(pagina, curso_prizma)
+            except Exception as error:
+                texto = str(error).strip()
+                return {
+                    "ok": False,
+                    "error": "ERROR_SELECCION_CURSO_PRIZMA: "
+                    + (texto.splitlines() or ["No se pudo confirmar la vista previa."])[0][:500],
+                    "resultados": resultados,
+                }
+
+            # Descubrimiento primero: recorrer las pestañas y leer los
+            # nombres del listado es barato y fija el total del avance.
+            pendientes = []
+            for categoria in categorias:
+                if _cancelacion_solicitada(estado):
+                    return {
+                        "ok": False,
+                        "error": "ERROR_CANCELADO",
+                        "resultados": resultados,
+                    }
+                actualizar_estado(
+                    estado,
+                    etapa="descubriendo",
+                    mensaje="Leyendo actividades de la pestaña " + categoria + "...",
+                )
+                try:
+                    listado_ok = asegurar_listado(pagina)
+                except Exception:
+                    listado_ok = False
+                if not listado_ok:
+                    pagina = abrir_sesion(
+                        "listado no disponible durante el descubrimiento"
+                    )
+                if not entrar_categoria(pagina, categoria, estado_navegacion):
+                    resultados.append({
+                        "categoria": categoria,
+                        "nombre": "",
+                        "estado": "no_se_pudo",
+                        "tipo": "",
+                        "archivo": "",
+                        "titulo_interno": "",
+                        "coincide": None,
+                        "detalle": "No se pudo abrir la pestaña " + categoria + ".",
+                    })
+                    continue
+                for fila_info in enumerar_actividades_curso(pagina):
+                    pendientes.append((categoria, fila_info["nombre"]))
+
+            total = len(pendientes)
+            actualizar_estado(
+                estado,
+                etapa="auditando",
+                mensaje=(
+                    "Curso con " + str(total) + " actividades; auditando una a una..."
+                    if total else "El curso no muestra actividades en sus pestañas."
+                ),
+                total=total,
+            )
+
+            for numero, (categoria, nombre) in enumerate(pendientes, start=1):
+                if _cancelacion_solicitada(estado):
+                    return {
+                        "ok": False,
+                        "error": "ERROR_CANCELADO",
+                        "resultados": resultados,
+                    }
+
+                actualizar_estado(
+                    estado,
+                    etapa="auditando",
+                    mensaje=(
+                        "Auditando " + str(numero) + " de " + str(total)
+                        + ": " + nombre
+                    ),
+                    procesadas=numero - 1,
+                )
+
+                entrada = {
+                    "categoria": categoria,
+                    "nombre": nombre,
+                    "estado": "no_se_pudo",
+                    "tipo": "",
+                    "archivo": "",
+                    "titulo_interno": "",
+                    "coincide": None,
+                    "detalle": "",
+                }
+
+                try:
+                    try:
+                        listado_ok = asegurar_listado(pagina)
+                    except Exception:
+                        listado_ok = False
+                    if not listado_ok:
+                        pagina = abrir_sesion(
+                            "listado no disponible durante la auditoria"
+                        )
+                        estado_navegacion["categoria_actual"] = None
+
+                    if not entrar_categoria(pagina, categoria, estado_navegacion):
+                        entrada["detalle"] = (
+                            "No se pudo abrir la pestaña " + categoria + "."
+                        )
+                    else:
+                        # Se relee el listado en cada visita: si PRIZMA lo
+                        # volvio a pintar, los ids de escaneo viejos no sirven.
+                        fila = None
+                        for item in enumerar_actividades_curso(pagina):
+                            if item["nombre"] == nombre:
+                                fila = encontrar_fila_escaneada(pagina, item["scan_id"])
+                                break
+                        if fila is None:
+                            entrada["detalle"] = (
+                                "La actividad desapareció del listado durante la auditoría."
+                            )
+                        else:
+                            entrada.update(
+                                auditar_actividad_curso(pagina, fila, nombre)
+                            )
+                except Exception:
+                    traceback.print_exc()
+                    entrada["estado"] = "no_se_pudo"
+                    entrada["detalle"] = (
+                        "No se pudo revisar la actividad (error inesperado)."
+                    )
+
+                resultados.append(entrada)
+
+                exitosas = sum(
+                    1 for r in resultados
+                    if r["estado"] == ESTADO_OK
+                )
+                errores = len(resultados) - exitosas
+                actualizar_estado(
+                    estado,
+                    procesadas=numero,
+                    exitosas=exitosas,
+                    errores=errores,
+                )
+        finally:
+            try:
+                if navegador is not None:
+                    navegador.close()
+            except Exception:
+                pass
+
+    return {
+        "ok": True,
+        "error": "",
+        "resultados": resultados,
+    }
 
 
 def ejecutar_cargue(

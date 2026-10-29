@@ -56,7 +56,7 @@ def _limpiar_reportes_moodle(report_dir):
     bases = {
         os.path.splitext(nombre)[0]
         for nombre in filenames
-        if nombre.startswith("moodle-cargue-") and nombre.endswith((".json", ".csv"))
+        if nombre.startswith(("moodle-cargue-", "moodle-auditoria-")) and nombre.endswith((".json", ".csv"))
     }
     for base in bases:
         paths = [os.path.join(report_dir, base + extension) for extension in (".json", ".csv")]

@@ -177,7 +177,7 @@ def test_prizma_workspace_tabs_are_in_requested_order():
     match = re.search(r'<nav class="workspace-tabs" aria-label="Herramientas PRIZMA">(.*?)</nav>', page)
     assert match
     tabs = match.group(1)
-    expected = ["/auditor", "/prizma", "/tests", "/cursos", "/cargue-actual", "/historial", "/reportes"]
+    expected = ["/auditor", "/prizma", "/tests", "/auditor-curso", "/cursos", "/cargue-actual", "/historial", "/reportes"]
     positions = [tabs.index('href="' + path + '"') for path in expected]
     assert positions == sorted(positions)
 
@@ -231,6 +231,19 @@ def test_moodle_auditor_tab_uses_shared_auditor_form():
     assert 'id="matriz"' in response.text and 'id="recursos"' in response.text
     tabs = response.text.split('<nav class="workspace-tabs"', 1)[1].split("</nav>", 1)[0]
     assert tabs.index('href="/moodle-auditor"') < tabs.index('href="/moodle"')
+
+
+def test_moodle_workspace_tabs_order_puts_course_audit_after_labels(monkeypatch):
+    monkeypatch.setattr(
+        "auto_prizma.api.routes.moodle_resources._request_is_local",
+        lambda _request: True,
+    )
+    page = _session_client().get("/moodle").text
+    tabs = page.split('<nav class="workspace-tabs"', 1)[1].split("</nav>", 1)[0]
+
+    expected = ["/moodle-auditor", "/moodle", "/moodle-etiquetas", "/moodle-auditor-curso", "/moodle-reportes"]
+    positions = [tabs.index('href="' + path + '"') for path in expected]
+    assert positions == sorted(positions)
 
 
 def test_moodle_upload_form_uses_styled_file_dropzones():

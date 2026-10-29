@@ -261,8 +261,19 @@ def test_manual_upload_rejects_wrong_extension_and_invalid_h5p(tmp_path, monkeyp
 
 def test_preview_rejects_course_from_another_host(tmp_path, monkeypatch):
     monkeypatch.setattr(moodle_resources, "UPLOADS_DIR", str(tmp_path / "uploads"))
-    with pytest.raises(ValueError, match="enlace HTTPS válido"):
+    with pytest.raises(ValueError, match="ID numérico"):
         moodle_resources.validate_course_url("https://example.com/course/view.php?id=42")
+
+
+@pytest.mark.parametrize("url", [
+    "https://prizma.americana.edu.co/course/view.php",
+    "https://prizma.americana.edu.co/course/view.php?id=",
+    "https://prizma.americana.edu.co/course/view.php?id=abc",
+    "https://prizma.americana.edu.co/course/other.php?id=42",
+])
+def test_course_url_requires_moodle_course_path_and_numeric_id(url):
+    with pytest.raises(ValueError, match="ID numérico"):
+        moodle_resources.validate_course_url(url)
 
 
 def test_invalid_matrix_does_not_leave_an_uploaded_job_directory(tmp_path, monkeypatch):

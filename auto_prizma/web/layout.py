@@ -38,12 +38,13 @@ NAV_ITEMS = (
     ("n8n", "Automatizaciones", "/automatizaciones-n8n", "codigo"),
 )
 
-_PRIZMA_TAB_KEYS = {"prizma", "test", "auditor", "cargue", "cursos", "historial", "reportes"}
+_PRIZMA_TAB_KEYS = {"prizma", "test", "auditor", "cargue", "cursos", "historial", "reportes", "curso-auditor"}
 _WORKSPACE_TABS = {
     "prizma": (
         ("auditor", "Auditor", "/auditor"),
         ("prizma", "Cargue", "/prizma"),
         ("test", "Test", "/tests"),
+        ("curso-auditor", "Auditar curso", "/auditor-curso"),
         ("cursos", "Cursos", "/cursos"),
         ("cargue", "En curso", "/cargue-actual"),
         ("historial", "Historial", "/historial"),
@@ -53,6 +54,7 @@ _WORKSPACE_TABS = {
         ("moodle-auditor", "Auditor", "/moodle-auditor"),
         ("moodle", "Cargue", "/moodle"),
         ("moodle-etiquetas", "Etiquetas", "/moodle-etiquetas"),
+        ("moodle-auditor-curso", "Auditar curso", "/moodle-auditor-curso"),
         ("moodle-reportes", "Reportes", "/moodle-reportes"),
     ),
 }
@@ -301,7 +303,7 @@ def render_page(title, content, *, active="", page_css="", page_js="", after_mai
         page_css / page_js: estilos y script propios de la pagina.
         after_main: HTML que va fuera del contenido (dialogos, cargadores).
     """
-    workspace = "prizma" if active in _PRIZMA_TAB_KEYS else ("moodle" if active in {"moodle", "moodle-auditor", "moodle-etiquetas", "moodle-reportes"} else "")
+    workspace = "prizma" if active in _PRIZMA_TAB_KEYS else ("moodle" if active in {"moodle", "moodle-auditor", "moodle-etiquetas", "moodle-auditor-curso", "moodle-reportes"} else "")
     nav_active = workspace or active
     tabs = _WORKSPACE_TABS.get(workspace, ())
     tabs_html = ""

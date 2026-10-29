@@ -110,6 +110,8 @@ En **http://127.0.0.1:8000/moodle** se publican recursos PDF/H5P directamente en
 
 Pasos detallados y explicación de los estados en **`GUIA_DETALLADA.md`** → *Uso: cargue Moodle*.
 
+La auditoría **Auditar curso** permite adjuntar opcionalmente la matriz CSV/XLSX para comparar semanas y nombres esperados con lo publicado. La matriz se procesa localmente y no se conserva; no se pide ni descarga el syllabus. Consulta **`GUIA_DETALLADA.md`** → *Auditoría profunda de un curso Moodle*.
+
 ---
 
 ## Problemas comunes

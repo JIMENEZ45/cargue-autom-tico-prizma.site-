@@ -336,6 +336,7 @@ def _pagina_progreso(
     titulo="Cargue en progreso",
     lista_titulo="Actividades del cargue",
     active="cargue",
+    estado_url="",
 ):
     """Pagina de progreso de un trabajo (se guarda en el para /proceso/<id>).
 
@@ -344,7 +345,7 @@ def _pagina_progreso(
     titulo y la etiqueta de la lista.
     """
     contenido = """
-    <section id="cargue-progreso" class="panel cabecera-progreso">
+    <section id="cargue-progreso" class="panel cabecera-progreso" data-estado-url="__ESTADO_URL__">
         <div class="cabecera-linea">
             <div class="cabecera-titulo">
                 <span class="icono-tile">__ICONO_SUBIR__</span>
@@ -411,6 +412,7 @@ def _pagina_progreso(
         .replace("__ICONO_ERROR__", icon("alerta-circulo"))
         .replace("__TITULO__", titulo)
         .replace("__LISTA_TITULO__", lista_titulo)
+        .replace("__ESTADO_URL__", estado_url)
     )
     return render_page(
         titulo,
@@ -468,6 +470,8 @@ _CSS_PROGRESO = r"""
 
 _JS_PROGRESO = r"""
 const trabajoId = "__TRABAJO_ID__";
+const raizProgreso = document.getElementById("cargue-progreso");
+const estadoUrl = (raizProgreso && raizProgreso.dataset.estadoUrl) || ("/estado/" + trabajoId);
 
 function escaparHtml(texto) {
     return String(texto ?? "")
@@ -523,13 +527,22 @@ function renderizarActividades(actividades) {
 
 async function revisarEstado() {
     try {
-        const respuesta = await fetch("/estado/" + trabajoId);
+        const respuesta = await fetch(estadoUrl);
         const datos = await respuesta.json();
 
-        document.getElementById("estado").innerText = datos.mensaje + (datos.posicion_cola ? ' · Posición en cola: ' + datos.posicion_cola : '');
-        document.getElementById("procesadas").innerText = datos.procesadas;
-        document.getElementById("exitosas").innerText = datos.exitosas;
-        document.getElementById("errores").innerText = datos.errores;
+        if (!respuesta.ok || datos.error) {
+            document.getElementById("estado").innerText = datos.error || "No se pudo consultar el estado del proceso.";
+            document.getElementById("actividad-actual").innerText = "No se pudo consultar el estado";
+            document.getElementById("procesadas").innerText = "0";
+            document.getElementById("exitosas").innerText = "0";
+            document.getElementById("errores").innerText = "0";
+            return;
+        }
+
+        document.getElementById("estado").innerText = (datos.mensaje || "Preparando proceso...") + (datos.posicion_cola ? ' · Posición en cola: ' + datos.posicion_cola : '');
+        document.getElementById("procesadas").innerText = datos.procesadas ?? 0;
+        document.getElementById("exitosas").innerText = datos.exitosas ?? 0;
+        document.getElementById("errores").innerText = datos.errores ?? 0;
         document.getElementById("total-actividades").innerText = datos.total || "—";
 
         renderizarActividades(datos.detalle_actividades);
