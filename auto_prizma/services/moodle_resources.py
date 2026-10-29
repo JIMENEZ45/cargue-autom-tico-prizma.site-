@@ -183,6 +183,7 @@ def validate_course_url(value):
 
     url = str(value or "").strip()
     parsed = urlparse(url)
+    course_id = parse_qs(parsed.query, keep_blank_values=True).get("id", [""])[0].strip()
     if (
         parsed.scheme != "https"
         or parsed.hostname != "prizma.americana.edu.co"
@@ -190,9 +191,12 @@ def validate_course_url(value):
         or parsed.password
         or parsed.port not in (None, 443)
         or parsed.path != "/course/view.php"
-        or not parse_qs(parsed.query).get("id", [""])[0]
+        or not course_id.isdigit()
     ):
-        raise ValueError("Ingresa un enlace HTTPS válido de un curso de Prizma.")
+        raise ValueError(
+            "Ingresa el enlace HTTPS del curso de Prizma con su ID numérico, "
+            "por ejemplo: https://prizma.americana.edu.co/course/view.php?id=695."
+        )
     return url
 
 
