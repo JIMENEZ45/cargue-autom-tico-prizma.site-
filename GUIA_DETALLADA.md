@@ -37,7 +37,7 @@ Construida con **FastAPI** y **Playwright (Chromium)**. Se despliega en **Railwa
 - **Historial y reportes separados por flujo.** PRIZMA conserva sus reportes CSV; Moodle ofrece una pestaña independiente con reportes CSV/JSON de sus publicaciones.
 - **Tests evaluativos.** Lee un .docx con preguntas, lo valida, permite corregirlo en pantalla y lo crea en PRIZMA. Puede hacerse por separado (`/tests`) o junto con un cargue de actividades.
 - **Cargue Moodle local.** En `/moodle` analiza una matriz CSV/XLSX y un ZIP de PDF/H5P, muestra la vista previa por semana y publica en un curso Prizma con Chromium visible e inicio de sesión manual. La pestaña **Etiquetas** contiene tarjetas separadas para banners, infografías y videos; puedes arrastrar la imagen y el HTML correspondiente se genera automáticamente, con la imagen en `src` como Data URL sin subirla a Moodle.
-- **Auditoría profunda de curso publicado.** Las pestañas **Auditar curso** de PRIZMA y Moodle recorren un curso ya cargado sin matriz, CSV ni syllabus. Abren cada actividad/recurso y verifican que exista y no esté en blanco, que renderice cuando el navegador puede comprobarlo y que el título de portada/interior coincida con el nombre mostrado en el curso. Es una revisión de solo lectura.
+- **Auditoría profunda de curso publicado.** Las pestañas **Auditar curso** de PRIZMA y Moodle recorren un curso ya cargado en modo de solo lectura. La auditoría PRIZMA descubre lo publicado directamente; Moodle también funciona sin matriz, pero admite una matriz opcional para comparar nombres y semanas esperados. Ninguna requiere ni descarga syllabus. Ambas verifican recursos y títulos según lo que cada plataforma permite inspeccionar.
 - **Tema claro/oscuro** y diseño adaptable a móvil.
 
 ---
@@ -51,7 +51,7 @@ para guardar enlaces compartidos de uso frecuente. Escribe un nombre y una URL H
 para crear una tarjeta; desde la tarjeta puedes abrir, editar o eliminar el enlace. El catálogo
 se conserva localmente en `data/matrices_favoritas.json`, no caduca y solo cambia al editarlo
 o eliminarlo manualmente; lo comparten los usuarios autenticados de esta instalación.
-Cargue PRIZMA abre primero en Auditor y reúne en pestañas Auditor, Cargue, Test, **Auditar curso**, Cursos, En curso, Historial y Reportes; Moodle mantiene pestañas independientes de Auditor, Cargue, Etiquetas, **Auditar curso** y Reportes. Los auditores de matriz/ZIP siguen revisando todas las filas que tienen enlace. La auditoría profunda es otro flujo: entra al curso publicado y obtiene sus actividades directamente de la plataforma, sin depender de matriz ni archivos locales. La sección n8n ofrece cuatro flujos y un acceso directo para **Crear semanas de curso** en PRIZMA desde CSV. Los flujos incluyen:
+Cargue PRIZMA abre primero en Auditor y reúne en pestañas Auditor, Cargue, Test, **Auditar curso**, Cursos, En curso, Historial y Reportes; Moodle mantiene pestañas independientes de Auditor, Cargue, Etiquetas, **Auditar curso** y Reportes. Los auditores de matriz/ZIP siguen revisando todas las filas que tienen enlace. La auditoría profunda entra al curso publicado y descubre sus actividades directamente. Moodle acepta opcionalmente una matriz local para comparar lo planeado con lo publicado, sin conservarla; no requiere syllabus. La sección n8n ofrece cuatro flujos y un acceso directo para **Crear semanas de curso** en PRIZMA desde CSV. Los flujos incluyen:
 tests JSON, descargar recursos, generar matriz CSV y crear plantillas temáticas.
 Las direcciones de webhook se configuran en el servidor y no se exponen al navegador.
 En **Descarga de recursos**, al enviar la URL de la matriz la ventana muestra **Cargando recursos…** con el tiempo transcurrido
@@ -208,7 +208,7 @@ Dockerfile                  Imagen para despliegue
 | `GET /moodle-reportes/{archivo}?formato=csv|json` | Descarga un reporte Moodle guardado |
 | `GET /auditor-curso`, `POST /auditor-curso` | Formulario e inicio de auditoría profunda PRIZMA (sin matriz; solo lectura) |
 | `GET /moodle-auditor-curso` | Formulario/progreso de auditoría profunda Moodle (solo loopback) |
-| `POST /moodle-auditor-curso/iniciar` | Inicia auditoría Moodle del enlace de curso |
+| `POST /moodle-auditor-curso/iniciar` | Inicia auditoría Moodle del curso; acepta una matriz CSV/XLSX opcional |
 | `GET /moodle-auditor-curso/{id}/estado`, `POST .../{id}/cancelar` | Consulta/cancela el trabajo Moodle, aislado por usuario |
 | `GET /moodle-auditor-curso/{id}/reporte?formato=csv|json` | Descarga el reporte de auditoría Moodle |
 

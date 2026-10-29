@@ -49,7 +49,7 @@ def moodle_audit_page(request: Request, nueva: bool = False):
 
 
 @app.post("/moodle-auditor-curso/iniciar", response_class=HTMLResponse)
-async def moodle_audit_start(
+def moodle_audit_start(
     request: Request,
     course_url: str = Form(""),
     matriz: UploadFile | None = File(None),
@@ -61,7 +61,7 @@ async def moodle_audit_start(
         )
     owner = _owner()
     try:
-        matrix_bytes = await matriz.read(20 * 1024 * 1024 + 1) if matriz else None
+        matrix_bytes = matriz.file.read(20 * 1024 * 1024 + 1) if matriz else None
         start_moodle_audit(
             owner,
             course_url,
